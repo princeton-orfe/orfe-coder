@@ -1,6 +1,6 @@
-# Coder on Azure AKS with Entra ID
+# ORFE Coder
 
-Automated deployment of [Coder](https://coder.com) on Azure Kubernetes Service (AKS) with Entra ID (Azure AD) authentication.
+Automated deployment of [Coder](https://coder.com) for departmental development environments on Azure Kubernetes Service (AKS) with Entra ID (Azure AD) authentication.
 
 ## Architecture
 
