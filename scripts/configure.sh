@@ -651,31 +651,91 @@ show_cost_estimate() {
     echo -e "  ${DIM}* Costs vary by region and usage. Autoscaling may increase costs.${NC}"
 }
 
-# Prompt to deploy
-prompt_deploy() {
+# Prompt for next action
+prompt_next_action() {
     echo ""
     echo -e "${GREEN}${BOLD}╔════════════════════════════════════════════════════════════════╗${NC}"
     echo -e "${GREEN}${BOLD}║${NC}              ${GREEN}Configuration Complete!${NC}                        ${GREEN}${BOLD}║${NC}"
     echo -e "${GREEN}${BOLD}╚════════════════════════════════════════════════════════════════╝${NC}"
     echo ""
 
-    echo -ne "  ${BOLD}Would you like to deploy now?${NC} ${DIM}[Y/n]${NC}: "
-    read -n 1 deploy_answer
-    echo ""
-
-    if [[ ! "${deploy_answer}" =~ ^[Nn]$ ]]; then
-        echo ""
-        exec "${SCRIPT_DIR}/deploy.sh"
-    else
-        echo ""
-        echo -e "  ${CYAN}To deploy later, run:${NC}"
-        echo -e "    ${DIM}./scripts/deploy.sh${NC}"
-        echo ""
-        echo -e "  ${CYAN}To modify configuration:${NC}"
-        echo -e "    ${DIM}./scripts/configure.sh${NC}"
-        echo -e "    ${DIM}# or edit terraform/terraform.tfvars directly${NC}"
-        echo ""
+    # Check if there's an existing deployment
+    local has_deployment=false
+    if [[ -f "${TERRAFORM_DIR}/terraform.tfstate" ]]; then
+        local resource_count
+        resource_count=$(cd "${TERRAFORM_DIR}" && terraform state list 2>/dev/null | wc -l || echo "0")
+        if [[ "${resource_count}" -gt 0 ]]; then
+            has_deployment=true
+        fi
     fi
+
+    if [[ "${has_deployment}" == "true" ]]; then
+        echo -e "  ${YELLOW}${BOLD}Existing deployment detected${NC}"
+        echo ""
+        echo -e "  ${BOLD}What would you like to do?${NC}"
+        echo -e "    ${DIM}1)${NC} Update deployment with new configuration"
+        echo -e "    ${DIM}2)${NC} Teardown existing deployment"
+        echo -e "    ${DIM}3)${NC} Exit (save configuration only)"
+        echo -ne "  ${CYAN}Select option${NC} ${DIM}[1]${NC}: "
+        read -n 1 action_choice
+        echo ""
+
+        case "${action_choice}" in
+            2)
+                echo ""
+                echo -e "  ${RED}${BOLD}Warning: This will destroy all Coder infrastructure!${NC}"
+                echo -ne "  ${BOLD}Are you sure?${NC} ${DIM}[y/N]${NC}: "
+                read -n 1 confirm_teardown
+                echo ""
+                if [[ "${confirm_teardown}" =~ ^[Yy]$ ]]; then
+                    exec "${SCRIPT_DIR}/teardown.sh"
+                else
+                    print_info "Teardown cancelled"
+                    show_next_steps
+                fi
+                ;;
+            3)
+                show_next_steps
+                ;;
+            *)
+                echo ""
+                exec "${SCRIPT_DIR}/deploy.sh"
+                ;;
+        esac
+    else
+        echo -ne "  ${BOLD}Would you like to deploy now?${NC} ${DIM}[Y/n]${NC}: "
+        read -n 1 deploy_answer
+        echo ""
+
+        if [[ ! "${deploy_answer}" =~ ^[Nn]$ ]]; then
+            echo ""
+            exec "${SCRIPT_DIR}/deploy.sh"
+        else
+            show_next_steps
+        fi
+    fi
+}
+
+# Show next steps
+show_next_steps() {
+    echo ""
+    echo -e "  ${CYAN}${BOLD}Available Commands:${NC}"
+    echo ""
+    echo -e "    ${GREEN}Deploy${NC}"
+    echo -e "      ${DIM}./scripts/deploy.sh${NC}"
+    echo ""
+    echo -e "    ${YELLOW}Reconfigure${NC}"
+    echo -e "      ${DIM}./scripts/configure.sh${NC}"
+    echo ""
+    echo -e "    ${RED}Teardown${NC}"
+    echo -e "      ${DIM}./scripts/teardown.sh${NC}"
+    echo ""
+    echo -e "    ${BLUE}Backup Management${NC}"
+    echo -e "      ${DIM}./scripts/backup-database.sh${NC}"
+    echo ""
+    echo -e "    ${MAGENTA}Add Local Provisioner${NC}"
+    echo -e "      ${DIM}./scripts/setup-provisioner.sh --help${NC}"
+    echo ""
 }
 
 # Main
@@ -709,8 +769,8 @@ main() {
     show_summary
     show_cost_estimate
 
-    # Offer to deploy
-    prompt_deploy
+    # Offer next action
+    prompt_next_action
 }
 
 main "$@"
