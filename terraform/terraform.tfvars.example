@@ -52,26 +52,14 @@ postgres_storage_mb = 32768              # 32 GB storage
 # =============================================================================
 # Network Access Configuration
 # =============================================================================
-# Options: "wireguard" (secure VPN), "loadbalancer" (public IP), "clusterip" (kubectl only)
+# Options: "loadbalancer" (public IP + Entra ID auth), "wireguard" (VPN), "clusterip" (kubectl only)
 
-network_access_type = "wireguard"  # Recommended for small teams
+network_access_type = "loadbalancer"  # Public access secured by Entra ID
 
 # WireGuard VPN settings (only used if network_access_type = "wireguard")
-wireguard_port         = 51820
-wireguard_network_cidr = "10.10.0.0/24"
-
-# Add team members as WireGuard peers
-# Generate keys with: wg genkey | tee privatekey | wg pubkey > publickey
-wireguard_peers = [
-  # {
-  #   name       = "alice"
-  #   public_key = "abc123..."
-  # },
-  # {
-  #   name       = "bob"
-  #   public_key = "def456..."
-  # },
-]
+# wireguard_port         = 51820
+# wireguard_network_cidr = "10.10.0.0/24"
+# wireguard_peers = []
 
 # =============================================================================
 # Backup Configuration
@@ -95,7 +83,7 @@ enable_external_provisioners = false
 
 coder_version = "2.16.0"
 
-# Domain configuration (optional - not needed with WireGuard)
+# Domain configuration (optional - for custom domain with HTTPS)
 coder_domain          = ""
 coder_wildcard_domain = ""
 enable_ingress        = false

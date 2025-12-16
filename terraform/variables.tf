@@ -207,7 +207,7 @@ variable "enable_ingress" {
 variable "network_access_type" {
   description = "How to expose Coder: 'loadbalancer' (public IP), 'wireguard' (VPN), or 'clusterip' (kubectl port-forward only)"
   type        = string
-  default     = "wireguard"
+  default     = "loadbalancer"
 
   validation {
     condition     = contains(["loadbalancer", "wireguard", "clusterip"], var.network_access_type)

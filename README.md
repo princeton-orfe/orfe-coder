@@ -44,14 +44,14 @@ Automated deployment of [Coder](https://coder.com) for departmental development 
 
 ## Features
 
-- **Entra ID Integration**: SSO with your organization's Azure AD / Entra ID
+- **Entra ID Integration**: SSO with your organization's Azure AD / Entra ID (no VPN required)
 - **Azure-Managed PostgreSQL**: Flexible Server with private networking
 - **AKS with Autoscaling**: Scale nodes based on workspace demand
-- **Secure by Default**: Private database, network policies, secure secrets
-- **WireGuard VPN**: Secure access without public exposure (recommended for small teams)
+- **Secure by Default**: Private database, network policies, Entra ID authentication
 - **Fully Automated**: Deploy and teardown with single commands
 - **Backup & Recovery**: Automated PostgreSQL backups with blob storage export
 - **Local Endpoints**: Run workspaces on laptops/desktops via external provisioners
+- **Optional WireGuard VPN**: Additional network-level security if needed
 
 ## Prerequisites
 
@@ -128,25 +128,13 @@ cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 
 ### 4. Access Coder
 
-After deployment, access depends on your `network_access_type`:
-
-**WireGuard VPN (recommended for small teams):**
-1. Set up WireGuard client: `./scripts/setup-wireguard-client.sh`
-2. Import the generated `.conf` file into your WireGuard app
-3. Connect to VPN
-4. Navigate to `http://10.10.0.1` or `http://coder.coder.svc.cluster.local`
-
-**LoadBalancer (public IP):**
-1. Get the LoadBalancer IP from the output
+After deployment:
+1. Get the LoadBalancer IP from the Terraform output
 2. Navigate to `http://<LOADBALANCER_IP>`
+3. Create your first admin account
+4. Team members sign in with Entra ID via "Sign in with [Department] Entra ID"
 
-**ClusterIP (kubectl only):**
-1. Run: `kubectl port-forward -n coder svc/coder 8080:80`
-2. Navigate to `http://localhost:8080`
-
-**For all access types:**
-- Create your first admin account
-- Users can sign in with Entra ID via "Sign in with [Department] Entra ID"
+No VPN or special software required - Entra ID provides authentication.
 
 ### 5. Teardown
 
@@ -189,10 +177,7 @@ After deployment, access depends on your `network_access_type`:
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `network_access_type` | `wireguard` | Access method: `wireguard`, `loadbalancer`, or `clusterip` |
-| `wireguard_port` | `51820` | WireGuard UDP port |
-| `wireguard_network_cidr` | `10.10.0.0/24` | VPN network range |
-| `wireguard_peers` | `[]` | List of WireGuard peers (name + public_key) |
+| `network_access_type` | `loadbalancer` | Access method: `loadbalancer`, `wireguard`, or `clusterip` |
 
 ### Entra ID Configuration
 
@@ -627,9 +612,19 @@ sudo systemctl restart coder-provisioner
 - **Resource isolation**: Docker provides container isolation; consider resource limits in templates
 - **Machine security**: Local machines should follow your organization's endpoint security policies
 
-## WireGuard VPN Access
+## WireGuard VPN Access (Optional)
 
-WireGuard provides secure, encrypted access to your Coder deployment without exposing it to the public internet. This is the recommended approach for small teams (≤10 users).
+WireGuard is an **optional** feature for environments that require additional network-level security beyond Entra ID authentication. Most deployments won't need this - Entra ID provides sufficient access control.
+
+**When to use WireGuard:**
+- Compliance requirements mandate VPN access
+- You want to prevent the Coder login page from being publicly visible
+- Defense-in-depth security posture
+
+**When LoadBalancer + Entra ID is sufficient (default):**
+- Team members only need their Entra ID credentials
+- No client software to install or configure
+- Simpler onboarding for new team members
 
 ### How It Works
 
@@ -796,22 +791,20 @@ ip route | grep 10.10
 
 ## Cost Estimate
 
-### Small Team Configuration (Default)
-
-Optimized for teams of ≤10 users with WireGuard access:
+### Default Configuration (Small Team ≤10 users)
 
 | Resource | SKU | Estimated Cost |
 |----------|-----|----------------|
 | AKS Nodes (1-5x) | Standard_D2s_v3 | ~$70 (1 node) |
 | PostgreSQL | B_Standard_B1ms (Burstable) | ~$15 |
-| Load Balancer | Standard (WireGuard only) | ~$5 |
+| Load Balancer | Standard | ~$20 |
 | Storage | 32GB | ~$3 |
 | Blob Storage (Backups) | LRS | ~$2 |
-| **Total** | | **~$95/month** |
+| **Total** | | **~$110/month** |
 
 ### Larger Team Configuration
 
-For teams requiring public access or higher capacity:
+For teams requiring higher capacity:
 
 | Resource | SKU | Estimated Cost |
 |----------|-----|----------------|
