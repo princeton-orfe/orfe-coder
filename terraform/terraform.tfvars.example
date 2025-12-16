@@ -1,0 +1,98 @@
+# Coder on Azure AKS - Configuration
+# Copy this file to terraform.tfvars and customize the values
+
+# =============================================================================
+# REQUIRED: Azure Authentication
+# =============================================================================
+# Get these from your Azure Service Principal
+
+subscription_id = "00000000-0000-0000-0000-000000000000"  # Your Azure Subscription ID
+tenant_id       = "00000000-0000-0000-0000-000000000000"  # Your Entra ID Tenant ID
+client_id       = "00000000-0000-0000-0000-000000000000"  # Service Principal App ID
+client_secret   = "your-service-principal-secret"         # Service Principal Secret
+
+# =============================================================================
+# General Configuration
+# =============================================================================
+
+resource_prefix = "mycompany-coder"  # Prefix for all resource names
+location        = "eastus"           # Azure region
+department_name = "Engineering"      # Department name (used in OIDC button text)
+
+# Resource tags
+tags = {
+  Environment = "Production"
+  Department  = "Engineering"
+  ManagedBy   = "Terraform"
+  Application = "Coder"
+  CostCenter  = "12345"
+}
+
+# =============================================================================
+# AKS Configuration
+# =============================================================================
+
+kubernetes_version = "1.28"              # Kubernetes version
+node_count         = 2                   # Initial node count
+node_vm_size       = "Standard_D4s_v3"   # VM size (4 vCPU, 16GB RAM)
+enable_autoscaling = true                # Enable cluster autoscaler
+min_node_count     = 2                   # Min nodes for autoscaler
+max_node_count     = 10                  # Max nodes for autoscaler
+
+# Optional: Azure AD groups with AKS admin access
+# Get group Object IDs from Entra ID > Groups
+aks_admin_group_ids = [
+  # "00000000-0000-0000-0000-000000000000",  # Platform Admins group
+]
+
+# =============================================================================
+# PostgreSQL Configuration
+# =============================================================================
+
+postgres_sku        = "GP_Standard_D2s_v3"  # General Purpose, 2 vCPU
+postgres_storage_mb = 32768                 # 32 GB storage
+
+# =============================================================================
+# Backup Configuration
+# =============================================================================
+
+backup_retention_days      = 14     # PostgreSQL backup retention (7-35 days)
+geo_redundant_backup       = false  # Enable for cross-region disaster recovery
+enable_backup_export       = true   # Export backups to blob storage
+backup_blob_retention_days = 365    # Long-term blob storage retention
+
+# =============================================================================
+# External Provisioners (Local Endpoints)
+# =============================================================================
+# Enable this to allow laptops/desktops to run workspaces locally
+
+enable_external_provisioners = false  # Set true to enable local provisioners
+provisioner_tags             = ""     # Default tags (e.g., "location:office")
+
+# =============================================================================
+# Coder Configuration
+# =============================================================================
+
+coder_version = "2.16.0"  # Coder Helm chart version
+
+# Domain configuration (optional but recommended for production)
+# If not set, Coder will be accessible via LoadBalancer IP
+coder_domain          = ""  # e.g., "coder.example.com"
+coder_wildcard_domain = ""  # e.g., "coder.example.com" (for *.coder.example.com)
+enable_ingress        = false
+
+# Experimental features (comma-separated)
+coder_experiments = ""
+
+# =============================================================================
+# Entra ID (Azure AD) Configuration
+# =============================================================================
+
+# Restrict login to specific email domains (leave empty to allow all)
+allowed_email_domains = [
+  # "example.com",
+  # "corp.example.com",
+]
+
+# Sync Entra ID groups to Coder (for RBAC)
+enable_group_sync = false

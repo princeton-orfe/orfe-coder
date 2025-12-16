@@ -1,0 +1,53 @@
+# Terraform
+*.tfstate
+*.tfstate.*
+*.tfvars
+!*.tfvars.example
+.terraform/
+.terraform.lock.hcl
+tfplan
+crash.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Secrets and credentials
+*.pem
+*.key
+*.crt
+*.pfx
+*.p12
+.env
+.env.*
+!.env.example
+*secret*
+*credential*
+!*secret*.example
+kubeconfig
+.kube/
+
+# IDE and editors
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Claude Code
+.claude/
+
+# Logs
+*.log
+logs/
+
+# Backups
+*.backup
+*.backup.*
+*.bak
+
+# OS files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
