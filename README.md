@@ -164,7 +164,7 @@ No VPN or special software required - Entra ID provides authentication.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `resource_prefix` | `coder` | Prefix for resource names |
+| `resource_group_name` | `coder-rg` | Azure resource group name |
 | `location` | `eastus` | Azure region |
 | `department_name` | `Research` | Shown on OIDC login button |
 | `node_vm_size` | `Standard_D2s_v3` | AKS node VM size (2 vCPU, 8GB - good for ≤10 users) |

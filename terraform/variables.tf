@@ -27,10 +27,10 @@ variable "client_secret" {
 # General Configuration
 # -----------------------------------------------------------------------------
 
-variable "resource_prefix" {
-  description = "Prefix for all resource names"
+variable "resource_group_name" {
+  description = "Name of the Azure resource group"
   type        = string
-  default     = "coder"
+  default     = "coder-rg"
 }
 
 variable "location" {

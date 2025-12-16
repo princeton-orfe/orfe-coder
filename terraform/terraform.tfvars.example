@@ -16,7 +16,7 @@ client_secret   = "your-service-principal-secret"         # Service Principal Se
 # General Configuration
 # =============================================================================
 
-resource_prefix = "coder"        # Prefix for all resource names
+resource_group_name = "coder-rg"  # Azure resource group name
 location        = "eastus"       # Azure region
 department_name = "Research"     # Department name (used in OIDC button text)
 

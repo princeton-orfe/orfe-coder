@@ -75,6 +75,16 @@ data "azurerm_client_config" "current" {}
 data "azuread_client_config" "current" {}
 
 # -----------------------------------------------------------------------------
+# Local Values
+# -----------------------------------------------------------------------------
+
+locals {
+  # Derive a short prefix from the resource group name for naming other resources
+  # e.g., "orfe-dept-azure-bs37-coder-rg" -> "orfe-dept-azure-bs37-coder"
+  resource_prefix = trimsuffix(var.resource_group_name, "-rg")
+}
+
+# -----------------------------------------------------------------------------
 # Random Resources for Secure Defaults
 # -----------------------------------------------------------------------------
 
@@ -98,7 +108,7 @@ resource "random_id" "suffix" {
 # -----------------------------------------------------------------------------
 
 resource "azurerm_resource_group" "coder" {
-  name     = "${var.resource_prefix}-rg-${random_id.suffix.hex}"
+  name     = var.resource_group_name
   location = var.location
 
   tags = var.tags
@@ -109,7 +119,7 @@ resource "azurerm_resource_group" "coder" {
 # -----------------------------------------------------------------------------
 
 resource "azuread_application" "coder" {
-  display_name = "${var.resource_prefix}-coder-app"
+  display_name = "${local.resource_prefix}-coder-app"
   owners       = [data.azuread_client_config.current.object_id]
 
   sign_in_audience = "AzureADMyOrg"
@@ -191,7 +201,7 @@ resource "azuread_service_principal" "coder" {
 # -----------------------------------------------------------------------------
 
 resource "azurerm_virtual_network" "coder" {
-  name                = "${var.resource_prefix}-vnet"
+  name                = "${local.resource_prefix}-vnet"
   location            = azurerm_resource_group.coder.location
   resource_group_name = azurerm_resource_group.coder.name
   address_space       = ["10.0.0.0/16"]
@@ -226,7 +236,7 @@ resource "azurerm_subnet" "postgres" {
 # -----------------------------------------------------------------------------
 
 resource "azurerm_private_dns_zone" "postgres" {
-  name                = "${var.resource_prefix}.postgres.database.azure.com"
+  name                = "${local.resource_prefix}.postgres.database.azure.com"
   resource_group_name = azurerm_resource_group.coder.name
 
   tags = var.tags
@@ -240,7 +250,7 @@ resource "azurerm_private_dns_zone_virtual_network_link" "postgres" {
 }
 
 resource "azurerm_postgresql_flexible_server" "coder" {
-  name                          = "${var.resource_prefix}-postgres-${random_id.suffix.hex}"
+  name                          = "${local.resource_prefix}-postgres-${random_id.suffix.hex}"
   resource_group_name           = azurerm_resource_group.coder.name
   location                      = azurerm_resource_group.coder.location
   version                       = "15"
@@ -267,7 +277,7 @@ resource "azurerm_postgresql_flexible_server" "coder" {
 resource "azurerm_storage_account" "backup" {
   count = var.enable_backup_export ? 1 : 0
 
-  name                     = "${replace(var.resource_prefix, "-", "")}backup${random_id.suffix.hex}"
+  name                     = "${replace(local.resource_prefix, "-", "")}backup${random_id.suffix.hex}"
   resource_group_name      = azurerm_resource_group.coder.name
   location                 = azurerm_resource_group.coder.location
   account_tier             = "Standard"
@@ -344,10 +354,10 @@ resource "azurerm_postgresql_flexible_server_database" "coder" {
 # -----------------------------------------------------------------------------
 
 resource "azurerm_kubernetes_cluster" "coder" {
-  name                = "${var.resource_prefix}-aks-${random_id.suffix.hex}"
+  name                = "${local.resource_prefix}-aks-${random_id.suffix.hex}"
   location            = azurerm_resource_group.coder.location
   resource_group_name = azurerm_resource_group.coder.name
-  dns_prefix          = "${var.resource_prefix}-coder"
+  dns_prefix          = "${local.resource_prefix}-coder"
   kubernetes_version  = var.kubernetes_version
 
   default_node_pool {

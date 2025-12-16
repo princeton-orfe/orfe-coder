@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Coder on Azure AKS - Interactive Configuration Script
 # Generates terraform.tfvars based on user input
+# Compatible with Bash 3.2+ (macOS default)
 
 set -euo pipefail
 
@@ -26,8 +27,35 @@ ARROW="→"
 BULLET="•"
 STAR="★"
 
-# Configuration values (will be populated by prompts)
-declare -A CONFIG
+# Configuration values (individual variables for Bash 3.2 compatibility)
+CFG_subscription_id=""
+CFG_tenant_id=""
+CFG_client_id=""
+CFG_client_secret=""
+CFG_resource_group_name=""
+CFG_department_name=""
+CFG_location=""
+CFG_node_vm_size=""
+CFG_node_count=""
+CFG_enable_autoscaling=""
+CFG_min_node_count=""
+CFG_max_node_count=""
+CFG_kubernetes_version=""
+CFG_postgres_sku=""
+CFG_postgres_storage_mb=""
+CFG_backup_retention_days=""
+CFG_geo_redundant_backup=""
+CFG_enable_backup_export=""
+CFG_backup_blob_retention_days=""
+CFG_network_access_type=""
+CFG_wireguard_port=""
+CFG_wireguard_network_cidr=""
+CFG_enable_external_provisioners=""
+CFG_coder_domain=""
+CFG_coder_wildcard_domain=""
+CFG_enable_ingress=""
+CFG_email_domains=""
+CFG_enable_group_sync=""
 
 # Helper functions
 print_header() {
@@ -43,7 +71,7 @@ print_section() {
     local icon="${2:-${STAR}}"
     echo ""
     echo -e "${BLUE}${BOLD}${icon} ${title}${NC}"
-    echo -e "${DIM}$(printf '%.0s─' {1..60})${NC}"
+    echo -e "${DIM}────────────────────────────────────────────────────────────${NC}"
 }
 
 print_step() {
@@ -64,90 +92,6 @@ print_error() {
 
 print_info() {
     echo -e "  ${DIM}${BULLET} $1${NC}"
-}
-
-# Prompt for input with default value
-prompt() {
-    local var_name="$1"
-    local prompt_text="$2"
-    local default="${3:-}"
-    local is_secret="${4:-false}"
-    local value=""
-
-    if [[ -n "${default}" ]]; then
-        echo -ne "  ${BOLD}${prompt_text}${NC} ${DIM}[${default}]${NC}: "
-    else
-        echo -ne "  ${BOLD}${prompt_text}${NC}: "
-    fi
-
-    if [[ "${is_secret}" == "true" ]]; then
-        read -s value
-        echo ""
-    else
-        read value
-    fi
-
-    if [[ -z "${value}" ]] && [[ -n "${default}" ]]; then
-        value="${default}"
-    fi
-
-    CONFIG["${var_name}"]="${value}"
-}
-
-# Prompt for yes/no
-prompt_yn() {
-    local var_name="$1"
-    local prompt_text="$2"
-    local default="${3:-n}"
-
-    local default_display
-    if [[ "${default}" == "y" ]]; then
-        default_display="Y/n"
-    else
-        default_display="y/N"
-    fi
-
-    echo -ne "  ${BOLD}${prompt_text}${NC} ${DIM}[${default_display}]${NC}: "
-    read -n 1 answer
-    echo ""
-
-    if [[ -z "${answer}" ]]; then
-        answer="${default}"
-    fi
-
-    if [[ "${answer}" =~ ^[Yy]$ ]]; then
-        CONFIG["${var_name}"]="true"
-    else
-        CONFIG["${var_name}"]="false"
-    fi
-}
-
-# Prompt with options
-prompt_select() {
-    local var_name="$1"
-    local prompt_text="$2"
-    shift 2
-    local options=("$@")
-
-    echo -e "  ${BOLD}${prompt_text}${NC}"
-    local i=1
-    for opt in "${options[@]}"; do
-        echo -e "    ${DIM}${i})${NC} ${opt}"
-        ((i++))
-    done
-
-    echo -ne "  ${CYAN}Select option${NC} ${DIM}[1]${NC}: "
-    read selection
-
-    if [[ -z "${selection}" ]]; then
-        selection=1
-    fi
-
-    if [[ "${selection}" =~ ^[0-9]+$ ]] && [[ "${selection}" -ge 1 ]] && [[ "${selection}" -le "${#options[@]}" ]]; then
-        CONFIG["${var_name}"]="${options[$((selection-1))]}"
-    else
-        CONFIG["${var_name}"]="${options[0]}"
-    fi
 }
 
 # Validate UUID format
@@ -187,7 +131,7 @@ check_azure_cli() {
         print_warning "Not logged into Azure CLI"
         echo ""
         echo -ne "  ${BOLD}Would you like to login now?${NC} ${DIM}[Y/n]${NC}: "
-        read -n 1 login_answer
+        read -r login_answer
         echo ""
 
         if [[ ! "${login_answer}" =~ ^[Nn]$ ]]; then
@@ -209,7 +153,7 @@ auto_detect_azure() {
 
     if [[ -n "${sub_id}" ]]; then
         print_success "Subscription: ${sub_name}"
-        CONFIG["subscription_id"]="${sub_id}"
+        CFG_subscription_id="${sub_id}"
     fi
 
     # Get tenant
@@ -217,17 +161,17 @@ auto_detect_azure() {
     tenant_id=$(az account show --query "tenantId" -o tsv 2>/dev/null || echo "")
     if [[ -n "${tenant_id}" ]]; then
         print_success "Tenant ID: ${tenant_id:0:8}..."
-        CONFIG["tenant_id"]="${tenant_id}"
+        CFG_tenant_id="${tenant_id}"
     fi
 
     # Check for existing service principal in environment
     if [[ -n "${ARM_CLIENT_ID:-}" ]]; then
         print_success "Found ARM_CLIENT_ID in environment"
-        CONFIG["client_id"]="${ARM_CLIENT_ID}"
+        CFG_client_id="${ARM_CLIENT_ID}"
     fi
     if [[ -n "${ARM_CLIENT_SECRET:-}" ]]; then
         print_success "Found ARM_CLIENT_SECRET in environment"
-        CONFIG["client_secret"]="${ARM_CLIENT_SECRET}"
+        CFG_client_secret="${ARM_CLIENT_SECRET}"
     fi
 }
 
@@ -235,10 +179,11 @@ auto_detect_azure() {
 configure_service_principal() {
     print_section "Service Principal Configuration" "🔑"
 
-    if [[ -n "${CONFIG[client_id]:-}" ]] && [[ -n "${CONFIG[client_secret]:-}" ]]; then
+    if [[ -n "${CFG_client_id}" ]] && [[ -n "${CFG_client_secret}" ]]; then
         print_info "Service principal credentials already configured"
-        prompt_yn "sp_reconfigure" "Reconfigure service principal?"
-        if [[ "${CONFIG[sp_reconfigure]}" != "true" ]]; then
+        echo -ne "  ${BOLD}Reconfigure service principal?${NC} ${DIM}[y/N]${NC}: "
+        read -r sp_reconfigure
+        if [[ ! "${sp_reconfigure}" =~ ^[Yy]$ ]]; then
             return 0
         fi
     fi
@@ -247,17 +192,21 @@ configure_service_principal() {
     echo -e "    ${DIM}1)${NC} Create a new service principal ${DIM}(recommended)${NC}"
     echo -e "    ${DIM}2)${NC} Enter existing service principal credentials"
     echo -ne "  ${CYAN}Select option${NC} ${DIM}[1]${NC}: "
-    read sp_choice
+    read -r sp_choice
 
     if [[ "${sp_choice}" == "2" ]]; then
         # Manual entry
-        prompt "client_id" "Client ID (App ID)"
-        while ! validate_uuid "${CONFIG[client_id]}"; do
+        echo -ne "  ${BOLD}Client ID (App ID)${NC}: "
+        read -r CFG_client_id
+        while ! validate_uuid "${CFG_client_id}"; do
             print_error "Invalid UUID format"
-            prompt "client_id" "Client ID (App ID)"
+            echo -ne "  ${BOLD}Client ID (App ID)${NC}: "
+            read -r CFG_client_id
         done
 
-        prompt "client_secret" "Client Secret" "" "true"
+        echo -ne "  ${BOLD}Client Secret${NC}: "
+        read -rs CFG_client_secret
+        echo ""
     else
         # Create new service principal
         print_step "Creating service principal..."
@@ -268,22 +217,25 @@ configure_service_principal() {
         if sp_output=$(az ad sp create-for-rbac \
             --name "${sp_name}" \
             --role Contributor \
-            --scopes "/subscriptions/${CONFIG[subscription_id]}" \
+            --scopes "/subscriptions/${CFG_subscription_id}" \
             --output json 2>&1); then
 
-            CONFIG["client_id"]=$(echo "${sp_output}" | jq -r '.appId')
-            CONFIG["client_secret"]=$(echo "${sp_output}" | jq -r '.password')
+            CFG_client_id=$(echo "${sp_output}" | grep -o '"appId": "[^"]*"' | cut -d'"' -f4)
+            CFG_client_secret=$(echo "${sp_output}" | grep -o '"password": "[^"]*"' | cut -d'"' -f4)
 
             print_success "Service principal created: ${sp_name}"
-            print_info "Client ID: ${CONFIG[client_id]}"
+            print_info "Client ID: ${CFG_client_id}"
             print_warning "Save the client secret securely - it won't be shown again"
         else
             print_error "Failed to create service principal"
             print_info "${sp_output}"
             print_info "You may need additional permissions or can enter credentials manually"
 
-            prompt "client_id" "Client ID (App ID)"
-            prompt "client_secret" "Client Secret" "" "true"
+            echo -ne "  ${BOLD}Client ID (App ID)${NC}: "
+            read -r CFG_client_id
+            echo -ne "  ${BOLD}Client Secret${NC}: "
+            read -rs CFG_client_secret
+            echo ""
         fi
     fi
 }
@@ -292,13 +244,18 @@ configure_service_principal() {
 configure_general() {
     print_section "General Configuration" "⚙️"
 
-    prompt "resource_prefix" "Resource name prefix" "coder"
-    prompt "department_name" "Department name (shown on login)" "Engineering"
+    echo -ne "  ${BOLD}Resource group name${NC} ${DIM}[coder-rg]${NC}: "
+    read -r input
+    CFG_resource_group_name="${input:-coder-rg}"
+
+    echo -ne "  ${BOLD}Department name (shown on login)${NC} ${DIM}[Research]${NC}: "
+    read -r input
+    CFG_department_name="${input:-Research}"
 
     # Location selection
     echo ""
     echo -e "  ${BOLD}Select Azure region:${NC}"
-    local regions=("eastus" "eastus2" "westus2" "westus3" "centralus" "northeurope" "westeurope" "uksouth" "southeastasia" "australiaeast")
+    local regions=("eastus" "eastus2" "westus2" "westus3" "centralus" "canadacentral" "northeurope" "westeurope" "uksouth" "southeastasia" "australiaeast")
     local i=1
     for region in "${regions[@]}"; do
         if [[ $i -le 5 ]]; then
@@ -306,23 +263,23 @@ configure_general() {
         else
             printf "    ${DIM}%d)${NC} %-15s\n" "$i" "$region"
         fi
-        ((i++))
+        ((i++)) || true
     done
     echo ""
     echo -ne "  ${CYAN}Select region${NC} ${DIM}[1 for eastus]${NC}: "
-    read region_choice
+    read -r region_choice
 
     if [[ -z "${region_choice}" ]]; then
         region_choice=1
     fi
 
     if [[ "${region_choice}" =~ ^[0-9]+$ ]] && [[ "${region_choice}" -ge 1 ]] && [[ "${region_choice}" -le "${#regions[@]}" ]]; then
-        CONFIG["location"]="${regions[$((region_choice-1))]}"
+        CFG_location="${regions[$((region_choice-1))]}"
     else
-        CONFIG["location"]="eastus"
+        CFG_location="eastus"
     fi
 
-    print_success "Region: ${CONFIG[location]}"
+    print_success "Region: ${CFG_location}"
 }
 
 # Configure AKS settings
@@ -336,100 +293,36 @@ configure_aks() {
     echo -e "    ${DIM}3)${NC} Standard_D8s_v3  ${DIM}(8 vCPU, 32GB - Large team, ~\$280/mo)${NC}"
     echo -e "    ${DIM}4)${NC} Standard_D16s_v3 ${DIM}(16 vCPU, 64GB - Enterprise, ~\$560/mo)${NC}"
     echo -ne "  ${CYAN}Select size${NC} ${DIM}[1]${NC}: "
-    read size_choice
+    read -r size_choice
 
     case "${size_choice}" in
-        2) CONFIG["node_vm_size"]="Standard_D4s_v3" ;;
-        3) CONFIG["node_vm_size"]="Standard_D8s_v3" ;;
-        4) CONFIG["node_vm_size"]="Standard_D16s_v3" ;;
-        *) CONFIG["node_vm_size"]="Standard_D2s_v3" ;;
+        2) CFG_node_vm_size="Standard_D4s_v3" ;;
+        3) CFG_node_vm_size="Standard_D8s_v3" ;;
+        4) CFG_node_vm_size="Standard_D16s_v3" ;;
+        *) CFG_node_vm_size="Standard_D2s_v3" ;;
     esac
 
-    prompt "node_count" "Initial node count" "1"
-    prompt_yn "enable_autoscaling" "Enable cluster autoscaling?" "y"
+    echo -ne "  ${BOLD}Initial node count${NC} ${DIM}[1]${NC}: "
+    read -r input
+    CFG_node_count="${input:-1}"
 
-    if [[ "${CONFIG[enable_autoscaling]}" == "true" ]]; then
-        prompt "min_node_count" "Minimum nodes" "1"
-        prompt "max_node_count" "Maximum nodes" "5"
-    fi
-
-    prompt "kubernetes_version" "Kubernetes version" "1.28"
-}
-
-# Configure domain
-configure_domain() {
-    print_section "Domain Configuration" "🌐"
-
-    print_info "A custom domain is recommended for production"
-    print_info "Without a domain, Coder will be accessible via LoadBalancer IP"
-    echo ""
-
-    prompt_yn "use_custom_domain" "Configure a custom domain?" "n"
-
-    if [[ "${CONFIG[use_custom_domain]}" == "true" ]]; then
-        prompt "coder_domain" "Domain name (e.g., coder.example.com)"
-        CONFIG["coder_wildcard_domain"]="${CONFIG[coder_domain]}"
-        CONFIG["enable_ingress"]="true"
-
-        print_info "After deployment, create DNS A record:"
-        print_info "${CONFIG[coder_domain]} → <LoadBalancer IP>"
+    echo -ne "  ${BOLD}Enable cluster autoscaling?${NC} ${DIM}[Y/n]${NC}: "
+    read -r input
+    if [[ "${input}" =~ ^[Nn]$ ]]; then
+        CFG_enable_autoscaling="false"
     else
-        CONFIG["coder_domain"]=""
-        CONFIG["coder_wildcard_domain"]=""
-        CONFIG["enable_ingress"]="false"
-    fi
-}
-
-# Configure Entra ID
-configure_entra() {
-    print_section "Entra ID (Azure AD) Configuration" "🔐"
-
-    print_info "Entra ID integration is configured automatically"
-    print_info "Users will sign in with their organizational accounts"
-    echo ""
-
-    prompt_yn "restrict_domains" "Restrict login to specific email domains?" "n"
-
-    if [[ "${CONFIG[restrict_domains]}" == "true" ]]; then
-        prompt "email_domains" "Allowed domains (comma-separated, e.g., example.com,corp.example.com)"
-    else
-        CONFIG["email_domains"]=""
+        CFG_enable_autoscaling="true"
+        echo -ne "  ${BOLD}Minimum nodes${NC} ${DIM}[1]${NC}: "
+        read -r input
+        CFG_min_node_count="${input:-1}"
+        echo -ne "  ${BOLD}Maximum nodes${NC} ${DIM}[5]${NC}: "
+        read -r input
+        CFG_max_node_count="${input:-5}"
     fi
 
-    prompt_yn "enable_group_sync" "Sync Entra ID groups to Coder for RBAC?" "n"
-}
-
-# Configure backups
-configure_backups() {
-    print_section "Backup Configuration" "💾"
-
-    print_info "PostgreSQL automated backups are always enabled"
-    echo ""
-
-    prompt "backup_retention_days" "Backup retention days (7-35)" "14"
-
-    prompt_yn "geo_redundant_backup" "Enable geo-redundant backups (cross-region DR)?" "n"
-    prompt_yn "enable_backup_export" "Export backups to Blob Storage (long-term retention)?" "y"
-
-    if [[ "${CONFIG[enable_backup_export]}" == "true" ]]; then
-        prompt "backup_blob_retention_days" "Blob storage retention days" "365"
-    fi
-}
-
-# Configure external provisioners
-configure_provisioners() {
-    print_section "External Provisioners (Local Endpoints)" "💻"
-
-    print_info "External provisioners allow laptops and desktops"
-    print_info "to run workspaces locally using Docker"
-    echo ""
-
-    prompt_yn "enable_external_provisioners" "Enable external provisioners?" "n"
-
-    if [[ "${CONFIG[enable_external_provisioners]}" == "true" ]]; then
-        print_success "External provisioners will be enabled"
-        print_info "After deployment, run setup-provisioner.sh on local machines"
-    fi
+    echo -ne "  ${BOLD}Kubernetes version${NC} ${DIM}[1.28]${NC}: "
+    read -r input
+    CFG_kubernetes_version="${input:-1.28}"
 }
 
 # Configure PostgreSQL
@@ -441,15 +334,17 @@ configure_postgres() {
     echo -e "    ${DIM}2)${NC} GP_Standard_D2s_v3 ${DIM}(2 vCPU, 8GB  - Medium team, ~\$125/mo)${NC}"
     echo -e "    ${DIM}3)${NC} GP_Standard_D4s_v3 ${DIM}(4 vCPU, 16GB - Large team, ~\$250/mo)${NC}"
     echo -ne "  ${CYAN}Select size${NC} ${DIM}[1]${NC}: "
-    read pg_choice
+    read -r pg_choice
 
     case "${pg_choice}" in
-        2) CONFIG["postgres_sku"]="GP_Standard_D2s_v3" ;;
-        3) CONFIG["postgres_sku"]="GP_Standard_D4s_v3" ;;
-        *) CONFIG["postgres_sku"]="B_Standard_B1ms" ;;
+        2) CFG_postgres_sku="GP_Standard_D2s_v3" ;;
+        3) CFG_postgres_sku="GP_Standard_D4s_v3" ;;
+        *) CFG_postgres_sku="B_Standard_B1ms" ;;
     esac
 
-    prompt "postgres_storage_mb" "Storage size in MB" "32768"
+    echo -ne "  ${BOLD}Storage size in MB${NC} ${DIM}[32768]${NC}: "
+    read -r input
+    CFG_postgres_storage_mb="${input:-32768}"
 }
 
 # Configure network access
@@ -458,31 +353,140 @@ configure_network() {
 
     echo -e "  ${BOLD}How should Coder be accessed?${NC}"
     echo ""
-    echo -e "    ${DIM}1)${NC} ${GREEN}WireGuard VPN${NC}     ${DIM}(Secure, ~\$5/mo for LB, recommended for small teams)${NC}"
-    echo -e "    ${DIM}2)${NC} LoadBalancer       ${DIM}(Public IP, ~\$20/mo, simple but exposed)${NC}"
+    echo -e "    ${DIM}1)${NC} ${GREEN}LoadBalancer${NC}       ${DIM}(Public IP + Entra ID auth, ~\$20/mo)${NC} ${GREEN}(recommended)${NC}"
+    echo -e "    ${DIM}2)${NC} WireGuard VPN     ${DIM}(Requires VPN client, ~\$5/mo for LB)${NC}"
     echo -e "    ${DIM}3)${NC} ClusterIP only     ${DIM}(\$0, requires kubectl port-forward)${NC}"
     echo ""
     echo -ne "  ${CYAN}Select access method${NC} ${DIM}[1]${NC}: "
-    read network_choice
+    read -r network_choice
 
     case "${network_choice}" in
         2)
-            CONFIG["network_access_type"]="loadbalancer"
-            print_info "Coder will be accessible via public LoadBalancer IP"
-            ;;
-        3)
-            CONFIG["network_access_type"]="clusterip"
-            print_info "Access via: kubectl port-forward -n coder svc/coder 8080:80"
-            ;;
-        *)
-            CONFIG["network_access_type"]="wireguard"
+            CFG_network_access_type="wireguard"
             print_success "WireGuard VPN will be configured"
             print_info "After deployment, run: ./scripts/setup-wireguard-client.sh"
             echo ""
-            prompt "wireguard_port" "WireGuard UDP port" "51820"
-            prompt "wireguard_network_cidr" "VPN network CIDR" "10.10.0.0/24"
+            echo -ne "  ${BOLD}WireGuard UDP port${NC} ${DIM}[51820]${NC}: "
+            read -r input
+            CFG_wireguard_port="${input:-51820}"
+            echo -ne "  ${BOLD}VPN network CIDR${NC} ${DIM}[10.10.0.0/24]${NC}: "
+            read -r input
+            CFG_wireguard_network_cidr="${input:-10.10.0.0/24}"
+            ;;
+        3)
+            CFG_network_access_type="clusterip"
+            print_info "Access via: kubectl port-forward -n coder svc/coder 8080:80"
+            ;;
+        *)
+            CFG_network_access_type="loadbalancer"
+            print_info "Coder will be accessible via public LoadBalancer IP"
+            print_info "Authentication provided by Entra ID"
             ;;
     esac
+}
+
+# Configure domain
+configure_domain() {
+    print_section "Domain Configuration" "🌐"
+
+    print_info "A custom domain is recommended for production"
+    print_info "Without a domain, Coder will be accessible via LoadBalancer IP"
+    echo ""
+
+    echo -ne "  ${BOLD}Configure a custom domain?${NC} ${DIM}[y/N]${NC}: "
+    read -r use_domain
+
+    if [[ "${use_domain}" =~ ^[Yy]$ ]]; then
+        echo -ne "  ${BOLD}Domain name (e.g., coder.example.com)${NC}: "
+        read -r CFG_coder_domain
+        CFG_coder_wildcard_domain="${CFG_coder_domain}"
+        CFG_enable_ingress="true"
+
+        print_info "After deployment, create DNS A record:"
+        print_info "${CFG_coder_domain} → <LoadBalancer IP>"
+    else
+        CFG_coder_domain=""
+        CFG_coder_wildcard_domain=""
+        CFG_enable_ingress="false"
+    fi
+}
+
+# Configure Entra ID
+configure_entra() {
+    print_section "Entra ID (Azure AD) Configuration" "🔐"
+
+    print_info "Entra ID integration is configured automatically"
+    print_info "Users will sign in with their organizational accounts"
+    echo ""
+
+    echo -ne "  ${BOLD}Restrict login to specific email domains?${NC} ${DIM}[y/N]${NC}: "
+    read -r restrict_domains
+
+    if [[ "${restrict_domains}" =~ ^[Yy]$ ]]; then
+        echo -ne "  ${BOLD}Allowed domains (comma-separated, e.g., example.com,corp.example.com)${NC}: "
+        read -r CFG_email_domains
+    else
+        CFG_email_domains=""
+    fi
+
+    echo -ne "  ${BOLD}Sync Entra ID groups to Coder for RBAC?${NC} ${DIM}[y/N]${NC}: "
+    read -r group_sync
+    if [[ "${group_sync}" =~ ^[Yy]$ ]]; then
+        CFG_enable_group_sync="true"
+    else
+        CFG_enable_group_sync="false"
+    fi
+}
+
+# Configure backups
+configure_backups() {
+    print_section "Backup Configuration" "💾"
+
+    print_info "PostgreSQL automated backups are always enabled"
+    echo ""
+
+    echo -ne "  ${BOLD}Backup retention days (7-35)${NC} ${DIM}[14]${NC}: "
+    read -r input
+    CFG_backup_retention_days="${input:-14}"
+
+    echo -ne "  ${BOLD}Enable geo-redundant backups (cross-region DR)?${NC} ${DIM}[y/N]${NC}: "
+    read -r geo_backup
+    if [[ "${geo_backup}" =~ ^[Yy]$ ]]; then
+        CFG_geo_redundant_backup="true"
+    else
+        CFG_geo_redundant_backup="false"
+    fi
+
+    echo -ne "  ${BOLD}Export backups to Blob Storage (long-term retention)?${NC} ${DIM}[Y/n]${NC}: "
+    read -r blob_backup
+    if [[ "${blob_backup}" =~ ^[Nn]$ ]]; then
+        CFG_enable_backup_export="false"
+    else
+        CFG_enable_backup_export="true"
+        echo -ne "  ${BOLD}Blob storage retention days${NC} ${DIM}[365]${NC}: "
+        read -r input
+        CFG_backup_blob_retention_days="${input:-365}"
+    fi
+}
+
+# Configure external provisioners
+configure_provisioners() {
+    print_section "External Provisioners (Local Endpoints)" "💻"
+
+    print_info "External provisioners allow laptops and desktops"
+    print_info "to run workspaces locally using Docker"
+    echo ""
+
+    echo -ne "  ${BOLD}Enable external provisioners?${NC} ${DIM}[y/N]${NC}: "
+    read -r ext_prov
+
+    if [[ "${ext_prov}" =~ ^[Yy]$ ]]; then
+        CFG_enable_external_provisioners="true"
+        print_success "External provisioners will be enabled"
+        print_info "After deployment, run setup-provisioner.sh on local machines"
+    else
+        CFG_enable_external_provisioners="false"
+    fi
 }
 
 # Generate terraform.tfvars
@@ -493,7 +497,7 @@ generate_tfvars() {
     if [[ -f "${TFVARS_FILE}" ]]; then
         local backup_file="${TFVARS_FILE}.backup.$(date +%Y%m%d%H%M%S)"
         cp "${TFVARS_FILE}" "${backup_file}"
-        print_info "Existing config backed up to: $(basename ${backup_file})"
+        print_info "Existing config backed up to: $(basename "${backup_file}")"
     fi
 
     cat > "${TFVARS_FILE}" <<EOF
@@ -504,22 +508,22 @@ generate_tfvars() {
 # Azure Authentication
 # =============================================================================
 
-subscription_id = "${CONFIG[subscription_id]}"
-tenant_id       = "${CONFIG[tenant_id]}"
-client_id       = "${CONFIG[client_id]}"
-client_secret   = "${CONFIG[client_secret]}"
+subscription_id = "${CFG_subscription_id}"
+tenant_id       = "${CFG_tenant_id}"
+client_id       = "${CFG_client_id}"
+client_secret   = "${CFG_client_secret}"
 
 # =============================================================================
 # General Configuration
 # =============================================================================
 
-resource_prefix = "${CONFIG[resource_prefix]}"
-location        = "${CONFIG[location]}"
-department_name = "${CONFIG[department_name]}"
+resource_group_name = "${CFG_resource_group_name}"
+location            = "${CFG_location}"
+department_name     = "${CFG_department_name}"
 
 tags = {
   Environment = "Production"
-  Department  = "${CONFIG[department_name]}"
+  Department  = "${CFG_department_name}"
   ManagedBy   = "Terraform"
   Application = "Coder"
 }
@@ -528,16 +532,16 @@ tags = {
 # AKS Configuration
 # =============================================================================
 
-kubernetes_version = "${CONFIG[kubernetes_version]}"
-node_count         = ${CONFIG[node_count]}
-node_vm_size       = "${CONFIG[node_vm_size]}"
-enable_autoscaling = ${CONFIG[enable_autoscaling]}
+kubernetes_version = "${CFG_kubernetes_version}"
+node_count         = ${CFG_node_count}
+node_vm_size       = "${CFG_node_vm_size}"
+enable_autoscaling = ${CFG_enable_autoscaling}
 EOF
 
-    if [[ "${CONFIG[enable_autoscaling]}" == "true" ]]; then
+    if [[ "${CFG_enable_autoscaling}" == "true" ]]; then
         cat >> "${TFVARS_FILE}" <<EOF
-min_node_count     = ${CONFIG[min_node_count]}
-max_node_count     = ${CONFIG[max_node_count]}
+min_node_count     = ${CFG_min_node_count}
+max_node_count     = ${CFG_max_node_count}
 EOF
     fi
 
@@ -547,21 +551,21 @@ EOF
 # PostgreSQL Configuration
 # =============================================================================
 
-postgres_sku        = "${CONFIG[postgres_sku]}"
-postgres_storage_mb = ${CONFIG[postgres_storage_mb]}
+postgres_sku        = "${CFG_postgres_sku}"
+postgres_storage_mb = ${CFG_postgres_storage_mb}
 
 # =============================================================================
 # Backup Configuration
 # =============================================================================
 
-backup_retention_days      = ${CONFIG[backup_retention_days]}
-geo_redundant_backup       = ${CONFIG[geo_redundant_backup]}
-enable_backup_export       = ${CONFIG[enable_backup_export]}
+backup_retention_days      = ${CFG_backup_retention_days}
+geo_redundant_backup       = ${CFG_geo_redundant_backup}
+enable_backup_export       = ${CFG_enable_backup_export}
 EOF
 
-    if [[ "${CONFIG[enable_backup_export]}" == "true" ]]; then
+    if [[ "${CFG_enable_backup_export}" == "true" ]]; then
         cat >> "${TFVARS_FILE}" <<EOF
-backup_blob_retention_days = ${CONFIG[backup_blob_retention_days]:-365}
+backup_blob_retention_days = ${CFG_backup_blob_retention_days:-365}
 EOF
     fi
 
@@ -571,13 +575,13 @@ EOF
 # Network Access Configuration
 # =============================================================================
 
-network_access_type = "${CONFIG[network_access_type]}"
+network_access_type = "${CFG_network_access_type}"
 EOF
 
-    if [[ "${CONFIG[network_access_type]}" == "wireguard" ]]; then
+    if [[ "${CFG_network_access_type}" == "wireguard" ]]; then
         cat >> "${TFVARS_FILE}" <<EOF
-wireguard_port         = ${CONFIG[wireguard_port]:-51820}
-wireguard_network_cidr = "${CONFIG[wireguard_network_cidr]:-10.10.0.0/24}"
+wireguard_port         = ${CFG_wireguard_port:-51820}
+wireguard_network_cidr = "${CFG_wireguard_network_cidr:-10.10.0.0/24}"
 wireguard_peers        = []  # Add peers with: ./scripts/setup-wireguard-client.sh
 EOF
     fi
@@ -588,7 +592,7 @@ EOF
 # External Provisioners
 # =============================================================================
 
-enable_external_provisioners = ${CONFIG[enable_external_provisioners]}
+enable_external_provisioners = ${CFG_enable_external_provisioners}
 
 # =============================================================================
 # Coder Configuration
@@ -597,11 +601,11 @@ enable_external_provisioners = ${CONFIG[enable_external_provisioners]}
 coder_version = "2.16.0"
 EOF
 
-    if [[ -n "${CONFIG[coder_domain]}" ]]; then
+    if [[ -n "${CFG_coder_domain}" ]]; then
         cat >> "${TFVARS_FILE}" <<EOF
-coder_domain          = "${CONFIG[coder_domain]}"
-coder_wildcard_domain = "${CONFIG[coder_wildcard_domain]}"
-enable_ingress        = ${CONFIG[enable_ingress]}
+coder_domain          = "${CFG_coder_domain}"
+coder_wildcard_domain = "${CFG_coder_wildcard_domain}"
+enable_ingress        = ${CFG_enable_ingress}
 EOF
     else
         cat >> "${TFVARS_FILE}" <<EOF
@@ -619,22 +623,28 @@ EOF
 
 EOF
 
-    if [[ -n "${CONFIG[email_domains]}" ]]; then
+    if [[ -n "${CFG_email_domains}" ]]; then
         # Convert comma-separated to array
-        local domains_array=""
-        IFS=',' read -ra DOMAINS <<< "${CONFIG[email_domains]}"
+        echo -n "allowed_email_domains = [" >> "${TFVARS_FILE}"
+        local first=true
+        IFS=',' read -ra DOMAINS <<< "${CFG_email_domains}"
         for domain in "${DOMAINS[@]}"; do
             domain=$(echo "${domain}" | xargs) # trim whitespace
-            domains_array+="  \"${domain}\",\n"
+            if [[ "${first}" == "true" ]]; then
+                echo -n "\"${domain}\"" >> "${TFVARS_FILE}"
+                first=false
+            else
+                echo -n ", \"${domain}\"" >> "${TFVARS_FILE}"
+            fi
         done
-        echo -e "allowed_email_domains = [\n${domains_array}]" >> "${TFVARS_FILE}"
+        echo "]" >> "${TFVARS_FILE}"
     else
         echo "allowed_email_domains = []" >> "${TFVARS_FILE}"
     fi
 
     cat >> "${TFVARS_FILE}" <<EOF
 
-enable_group_sync = ${CONFIG[enable_group_sync]}
+enable_group_sync = ${CFG_enable_group_sync}
 EOF
 
     print_success "Configuration saved to: terraform/terraform.tfvars"
@@ -646,29 +656,29 @@ show_summary() {
 
     echo ""
     echo -e "  ${BOLD}Azure${NC}"
-    echo -e "    Subscription:  ${CONFIG[subscription_id]:0:8}..."
-    echo -e "    Region:        ${CONFIG[location]}"
-    echo -e "    Prefix:        ${CONFIG[resource_prefix]}"
+    echo -e "    Subscription:  ${CFG_subscription_id:0:8}..."
+    echo -e "    Region:        ${CFG_location}"
+    echo -e "    Resource Group: ${CFG_resource_group_name}"
     echo ""
     echo -e "  ${BOLD}Kubernetes${NC}"
-    echo -e "    Node Size:     ${CONFIG[node_vm_size]}"
-    echo -e "    Nodes:         ${CONFIG[node_count]} (autoscale: ${CONFIG[enable_autoscaling]})"
+    echo -e "    Node Size:     ${CFG_node_vm_size}"
+    echo -e "    Nodes:         ${CFG_node_count} (autoscale: ${CFG_enable_autoscaling})"
     echo ""
     echo -e "  ${BOLD}Network Access${NC}"
-    echo -e "    Type:          ${CONFIG[network_access_type]}"
-    if [[ "${CONFIG[network_access_type]}" == "wireguard" ]]; then
-        echo -e "    VPN Port:      ${CONFIG[wireguard_port]:-51820}/UDP"
-        echo -e "    VPN Network:   ${CONFIG[wireguard_network_cidr]:-10.10.0.0/24}"
+    echo -e "    Type:          ${CFG_network_access_type}"
+    if [[ "${CFG_network_access_type}" == "wireguard" ]]; then
+        echo -e "    VPN Port:      ${CFG_wireguard_port:-51820}/UDP"
+        echo -e "    VPN Network:   ${CFG_wireguard_network_cidr:-10.10.0.0/24}"
     fi
     echo ""
     echo -e "  ${BOLD}Database${NC}"
-    echo -e "    SKU:           ${CONFIG[postgres_sku]}"
-    echo -e "    Backup:        ${CONFIG[backup_retention_days]} days"
+    echo -e "    SKU:           ${CFG_postgres_sku}"
+    echo -e "    Backup:        ${CFG_backup_retention_days} days"
     echo ""
     echo -e "  ${BOLD}Features${NC}"
-    echo -e "    Domain:        ${CONFIG[coder_domain]:-<via VPN or LoadBalancer>}"
-    echo -e "    Provisioners:  ${CONFIG[enable_external_provisioners]}"
-    echo -e "    Group Sync:    ${CONFIG[enable_group_sync]}"
+    echo -e "    Domain:        ${CFG_coder_domain:-<via LoadBalancer IP>}"
+    echo -e "    Provisioners:  ${CFG_enable_external_provisioners}"
+    echo -e "    Group Sync:    ${CFG_enable_group_sync}"
     echo ""
 }
 
@@ -678,16 +688,16 @@ show_cost_estimate() {
 
     local aks_cost=0
     local pg_cost=0
-    local nodes="${CONFIG[node_count]}"
+    local nodes="${CFG_node_count}"
 
-    case "${CONFIG[node_vm_size]}" in
+    case "${CFG_node_vm_size}" in
         "Standard_D2s_v3")  aks_cost=$((nodes * 70)) ;;
         "Standard_D4s_v3")  aks_cost=$((nodes * 140)) ;;
         "Standard_D8s_v3")  aks_cost=$((nodes * 280)) ;;
         "Standard_D16s_v3") aks_cost=$((nodes * 560)) ;;
     esac
 
-    case "${CONFIG[postgres_sku]}" in
+    case "${CFG_postgres_sku}" in
         "B_Standard_B1ms")    pg_cost=15 ;;
         "GP_Standard_D2s_v3") pg_cost=125 ;;
         "GP_Standard_D4s_v3") pg_cost=250 ;;
@@ -695,7 +705,7 @@ show_cost_estimate() {
 
     local lb_cost=0
     local lb_desc=""
-    case "${CONFIG[network_access_type]}" in
+    case "${CFG_network_access_type}" in
         "loadbalancer")
             lb_cost=20
             lb_desc="LoadBalancer (public IP)"
@@ -718,7 +728,7 @@ show_cost_estimate() {
     printf "    %-25s %s\n" "PostgreSQL:" "~\$${pg_cost}/mo"
     printf "    %-25s %s\n" "${lb_desc}:" "~\$${lb_cost}/mo"
     printf "    %-25s %s\n" "Storage & Backups:" "~\$${storage_cost}/mo"
-    echo -e "    ${DIM}$(printf '%.0s─' {1..40})${NC}"
+    echo -e "    ${DIM}────────────────────────────────────────${NC}"
     printf "    ${BOLD}%-25s ~\$%d/mo${NC}\n" "Estimated Total:" "${total}"
     echo ""
     echo -e "  ${DIM}* Costs vary by region and usage. Autoscaling may increase costs.${NC}"
@@ -750,7 +760,7 @@ prompt_next_action() {
         echo -e "    ${DIM}2)${NC} Teardown existing deployment"
         echo -e "    ${DIM}3)${NC} Exit (save configuration only)"
         echo -ne "  ${CYAN}Select option${NC} ${DIM}[1]${NC}: "
-        read -n 1 action_choice
+        read -r action_choice
         echo ""
 
         case "${action_choice}" in
@@ -758,7 +768,7 @@ prompt_next_action() {
                 echo ""
                 echo -e "  ${RED}${BOLD}Warning: This will destroy all Coder infrastructure!${NC}"
                 echo -ne "  ${BOLD}Are you sure?${NC} ${DIM}[y/N]${NC}: "
-                read -n 1 confirm_teardown
+                read -r confirm_teardown
                 echo ""
                 if [[ "${confirm_teardown}" =~ ^[Yy]$ ]]; then
                     exec "${SCRIPT_DIR}/teardown.sh"
@@ -777,7 +787,7 @@ prompt_next_action() {
         esac
     else
         echo -ne "  ${BOLD}Would you like to deploy now?${NC} ${DIM}[Y/n]${NC}: "
-        read -n 1 deploy_answer
+        read -r deploy_answer
         echo ""
 
         if [[ ! "${deploy_answer}" =~ ^[Nn]$ ]]; then
@@ -806,7 +816,7 @@ show_next_steps() {
     echo -e "    ${BLUE}Backup Management${NC}"
     echo -e "      ${DIM}./scripts/backup-database.sh${NC}"
     echo ""
-    if [[ "${CONFIG[network_access_type]:-}" == "wireguard" ]]; then
+    if [[ "${CFG_network_access_type:-}" == "wireguard" ]]; then
         echo -e "    ${CYAN}Setup WireGuard Client${NC}"
         echo -e "      ${DIM}./scripts/setup-wireguard-client.sh${NC}"
         echo ""
