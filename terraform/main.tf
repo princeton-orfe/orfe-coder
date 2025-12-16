@@ -82,6 +82,17 @@ locals {
   # Derive a short prefix from the resource group name for naming other resources
   # e.g., "orfe-dept-azure-bs37-coder-rg" -> "orfe-dept-azure-bs37-coder"
   resource_prefix = trimsuffix(var.resource_group_name, "-rg")
+
+  # Coder access URL - use custom domain if set, otherwise LoadBalancer IP
+  coder_access_url = var.coder_domain != "" ? "https://${var.coder_domain}" : "http://${try(data.kubernetes_service.coder.status[0].load_balancer[0].ingress[0].ip, "PENDING")}"
+
+  # OIDC redirect URIs
+  # When using a custom domain, we know the URL upfront
+  # When using LoadBalancer, we add the IP-based URI after first deploy
+  oidc_redirect_uris = compact(concat(
+    var.coder_domain != "" ? ["https://${var.coder_domain}/api/v2/users/oidc/callback"] : [],
+    ["http://localhost:3000/api/v2/users/oidc/callback"]
+  ))
 }
 
 # -----------------------------------------------------------------------------
@@ -125,10 +136,7 @@ resource "azuread_application" "coder" {
   sign_in_audience = "AzureADMyOrg"
 
   web {
-    redirect_uris = [
-      "https://${var.coder_domain}/api/v2/users/oidc/callback",
-      "http://localhost:3000/api/v2/users/oidc/callback" # For local development
-    ]
+    redirect_uris = local.oidc_redirect_uris
 
     implicit_grant {
       access_token_issuance_enabled = false
@@ -188,6 +196,20 @@ resource "azuread_application_password" "coder" {
   application_id = azuread_application.coder.id
   display_name   = "coder-oidc-secret"
   end_date       = timeadd(timestamp(), "8760h") # 1 year
+}
+
+# Add LoadBalancer IP-based redirect URI after Coder is deployed (when no custom domain)
+resource "azuread_application_redirect_uris" "coder_lb" {
+  count          = var.coder_domain == "" && var.network_access_type == "loadbalancer" ? 1 : 0
+  application_id = azuread_application.coder.id
+  type           = "Web"
+
+  redirect_uris = [
+    "http://${try(data.kubernetes_service.coder.status[0].load_balancer[0].ingress[0].ip, "127.0.0.1")}/api/v2/users/oidc/callback",
+    "http://localhost:3000/api/v2/users/oidc/callback"
+  ]
+
+  depends_on = [helm_release.coder, data.kubernetes_service.coder]
 }
 
 resource "azuread_service_principal" "coder" {
