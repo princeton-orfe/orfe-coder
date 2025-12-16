@@ -331,26 +331,26 @@ configure_aks() {
 
     # Node size
     echo -e "  ${BOLD}Select node VM size:${NC}"
-    echo -e "    ${DIM}1)${NC} Standard_D2s_v3  ${DIM}(2 vCPU, 8GB  - Dev/Test)${NC}"
-    echo -e "    ${DIM}2)${NC} Standard_D4s_v3  ${DIM}(4 vCPU, 16GB - Small team)${NC}"
-    echo -e "    ${DIM}3)${NC} Standard_D8s_v3  ${DIM}(8 vCPU, 32GB - Medium team)${NC}"
-    echo -e "    ${DIM}4)${NC} Standard_D16s_v3 ${DIM}(16 vCPU, 64GB - Large team)${NC}"
-    echo -ne "  ${CYAN}Select size${NC} ${DIM}[2]${NC}: "
+    echo -e "    ${DIM}1)${NC} Standard_D2s_v3  ${DIM}(2 vCPU, 8GB  - Small team ≤10, ~\$70/mo)${NC} ${GREEN}(recommended)${NC}"
+    echo -e "    ${DIM}2)${NC} Standard_D4s_v3  ${DIM}(4 vCPU, 16GB - Medium team, ~\$140/mo)${NC}"
+    echo -e "    ${DIM}3)${NC} Standard_D8s_v3  ${DIM}(8 vCPU, 32GB - Large team, ~\$280/mo)${NC}"
+    echo -e "    ${DIM}4)${NC} Standard_D16s_v3 ${DIM}(16 vCPU, 64GB - Enterprise, ~\$560/mo)${NC}"
+    echo -ne "  ${CYAN}Select size${NC} ${DIM}[1]${NC}: "
     read size_choice
 
     case "${size_choice}" in
-        1) CONFIG["node_vm_size"]="Standard_D2s_v3" ;;
+        2) CONFIG["node_vm_size"]="Standard_D4s_v3" ;;
         3) CONFIG["node_vm_size"]="Standard_D8s_v3" ;;
         4) CONFIG["node_vm_size"]="Standard_D16s_v3" ;;
-        *) CONFIG["node_vm_size"]="Standard_D4s_v3" ;;
+        *) CONFIG["node_vm_size"]="Standard_D2s_v3" ;;
     esac
 
-    prompt "node_count" "Initial node count" "2"
+    prompt "node_count" "Initial node count" "1"
     prompt_yn "enable_autoscaling" "Enable cluster autoscaling?" "y"
 
     if [[ "${CONFIG[enable_autoscaling]}" == "true" ]]; then
-        prompt "min_node_count" "Minimum nodes" "2"
-        prompt "max_node_count" "Maximum nodes" "10"
+        prompt "min_node_count" "Minimum nodes" "1"
+        prompt "max_node_count" "Maximum nodes" "5"
     fi
 
     prompt "kubernetes_version" "Kubernetes version" "1.28"
@@ -437,19 +437,52 @@ configure_postgres() {
     print_section "Database Configuration" "🗄️"
 
     echo -e "  ${BOLD}Select PostgreSQL size:${NC}"
-    echo -e "    ${DIM}1)${NC} B_Standard_B1ms   ${DIM}(1 vCPU, 2GB  - Dev/Test, ~\$15/mo)${NC}"
-    echo -e "    ${DIM}2)${NC} GP_Standard_D2s_v3 ${DIM}(2 vCPU, 8GB  - Production, ~\$125/mo)${NC}"
-    echo -e "    ${DIM}3)${NC} GP_Standard_D4s_v3 ${DIM}(4 vCPU, 16GB - Large scale, ~\$250/mo)${NC}"
-    echo -ne "  ${CYAN}Select size${NC} ${DIM}[2]${NC}: "
+    echo -e "    ${DIM}1)${NC} B_Standard_B1ms    ${DIM}(1 vCPU, 2GB  - Small team ≤10, ~\$15/mo)${NC} ${GREEN}(recommended)${NC}"
+    echo -e "    ${DIM}2)${NC} GP_Standard_D2s_v3 ${DIM}(2 vCPU, 8GB  - Medium team, ~\$125/mo)${NC}"
+    echo -e "    ${DIM}3)${NC} GP_Standard_D4s_v3 ${DIM}(4 vCPU, 16GB - Large team, ~\$250/mo)${NC}"
+    echo -ne "  ${CYAN}Select size${NC} ${DIM}[1]${NC}: "
     read pg_choice
 
     case "${pg_choice}" in
-        1) CONFIG["postgres_sku"]="B_Standard_B1ms" ;;
+        2) CONFIG["postgres_sku"]="GP_Standard_D2s_v3" ;;
         3) CONFIG["postgres_sku"]="GP_Standard_D4s_v3" ;;
-        *) CONFIG["postgres_sku"]="GP_Standard_D2s_v3" ;;
+        *) CONFIG["postgres_sku"]="B_Standard_B1ms" ;;
     esac
 
     prompt "postgres_storage_mb" "Storage size in MB" "32768"
+}
+
+# Configure network access
+configure_network() {
+    print_section "Network Access Configuration" "🌐"
+
+    echo -e "  ${BOLD}How should Coder be accessed?${NC}"
+    echo ""
+    echo -e "    ${DIM}1)${NC} ${GREEN}WireGuard VPN${NC}     ${DIM}(Secure, ~\$5/mo for LB, recommended for small teams)${NC}"
+    echo -e "    ${DIM}2)${NC} LoadBalancer       ${DIM}(Public IP, ~\$20/mo, simple but exposed)${NC}"
+    echo -e "    ${DIM}3)${NC} ClusterIP only     ${DIM}(\$0, requires kubectl port-forward)${NC}"
+    echo ""
+    echo -ne "  ${CYAN}Select access method${NC} ${DIM}[1]${NC}: "
+    read network_choice
+
+    case "${network_choice}" in
+        2)
+            CONFIG["network_access_type"]="loadbalancer"
+            print_info "Coder will be accessible via public LoadBalancer IP"
+            ;;
+        3)
+            CONFIG["network_access_type"]="clusterip"
+            print_info "Access via: kubectl port-forward -n coder svc/coder 8080:80"
+            ;;
+        *)
+            CONFIG["network_access_type"]="wireguard"
+            print_success "WireGuard VPN will be configured"
+            print_info "After deployment, run: ./scripts/setup-wireguard-client.sh"
+            echo ""
+            prompt "wireguard_port" "WireGuard UDP port" "51820"
+            prompt "wireguard_network_cidr" "VPN network CIDR" "10.10.0.0/24"
+            ;;
+    esac
 }
 
 # Generate terraform.tfvars
@@ -535,6 +568,23 @@ EOF
     cat >> "${TFVARS_FILE}" <<EOF
 
 # =============================================================================
+# Network Access Configuration
+# =============================================================================
+
+network_access_type = "${CONFIG[network_access_type]}"
+EOF
+
+    if [[ "${CONFIG[network_access_type]}" == "wireguard" ]]; then
+        cat >> "${TFVARS_FILE}" <<EOF
+wireguard_port         = ${CONFIG[wireguard_port]:-51820}
+wireguard_network_cidr = "${CONFIG[wireguard_network_cidr]:-10.10.0.0/24}"
+wireguard_peers        = []  # Add peers with: ./scripts/setup-wireguard-client.sh
+EOF
+    fi
+
+    cat >> "${TFVARS_FILE}" <<EOF
+
+# =============================================================================
 # External Provisioners
 # =============================================================================
 
@@ -604,12 +654,19 @@ show_summary() {
     echo -e "    Node Size:     ${CONFIG[node_vm_size]}"
     echo -e "    Nodes:         ${CONFIG[node_count]} (autoscale: ${CONFIG[enable_autoscaling]})"
     echo ""
+    echo -e "  ${BOLD}Network Access${NC}"
+    echo -e "    Type:          ${CONFIG[network_access_type]}"
+    if [[ "${CONFIG[network_access_type]}" == "wireguard" ]]; then
+        echo -e "    VPN Port:      ${CONFIG[wireguard_port]:-51820}/UDP"
+        echo -e "    VPN Network:   ${CONFIG[wireguard_network_cidr]:-10.10.0.0/24}"
+    fi
+    echo ""
     echo -e "  ${BOLD}Database${NC}"
     echo -e "    SKU:           ${CONFIG[postgres_sku]}"
     echo -e "    Backup:        ${CONFIG[backup_retention_days]} days"
     echo ""
     echo -e "  ${BOLD}Features${NC}"
-    echo -e "    Domain:        ${CONFIG[coder_domain]:-<LoadBalancer IP>}"
+    echo -e "    Domain:        ${CONFIG[coder_domain]:-<via VPN or LoadBalancer>}"
     echo -e "    Provisioners:  ${CONFIG[enable_external_provisioners]}"
     echo -e "    Group Sync:    ${CONFIG[enable_group_sync]}"
     echo ""
@@ -636,14 +693,30 @@ show_cost_estimate() {
         "GP_Standard_D4s_v3") pg_cost=250 ;;
     esac
 
-    local lb_cost=20
-    local storage_cost=10
+    local lb_cost=0
+    local lb_desc=""
+    case "${CONFIG[network_access_type]}" in
+        "loadbalancer")
+            lb_cost=20
+            lb_desc="LoadBalancer (public IP)"
+            ;;
+        "wireguard")
+            lb_cost=5
+            lb_desc="WireGuard LB (UDP only)"
+            ;;
+        *)
+            lb_cost=0
+            lb_desc="ClusterIP (no LB)"
+            ;;
+    esac
+
+    local storage_cost=5
     local total=$((aks_cost + pg_cost + lb_cost + storage_cost))
 
     echo ""
     printf "    %-25s %s\n" "AKS Nodes (${nodes}x):" "~\$${aks_cost}/mo"
     printf "    %-25s %s\n" "PostgreSQL:" "~\$${pg_cost}/mo"
-    printf "    %-25s %s\n" "Load Balancer:" "~\$${lb_cost}/mo"
+    printf "    %-25s %s\n" "${lb_desc}:" "~\$${lb_cost}/mo"
     printf "    %-25s %s\n" "Storage & Backups:" "~\$${storage_cost}/mo"
     echo -e "    ${DIM}$(printf '%.0s─' {1..40})${NC}"
     printf "    ${BOLD}%-25s ~\$%d/mo${NC}\n" "Estimated Total:" "${total}"
@@ -733,6 +806,11 @@ show_next_steps() {
     echo -e "    ${BLUE}Backup Management${NC}"
     echo -e "      ${DIM}./scripts/backup-database.sh${NC}"
     echo ""
+    if [[ "${CONFIG[network_access_type]:-}" == "wireguard" ]]; then
+        echo -e "    ${CYAN}Setup WireGuard Client${NC}"
+        echo -e "      ${DIM}./scripts/setup-wireguard-client.sh${NC}"
+        echo ""
+    fi
     echo -e "    ${MAGENTA}Add Local Provisioner${NC}"
     echo -e "      ${DIM}./scripts/setup-provisioner.sh --help${NC}"
     echo ""
@@ -757,6 +835,7 @@ main() {
     configure_general
     configure_aks
     configure_postgres
+    configure_network
     configure_domain
     configure_entra
     configure_backups

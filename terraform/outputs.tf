@@ -23,14 +23,23 @@ output "postgres_server_fqdn" {
   sensitive   = true
 }
 
+output "network_access_type" {
+  description = "Network access type configured"
+  value       = var.network_access_type
+}
+
 output "coder_load_balancer_ip" {
-  description = "External IP address of the Coder LoadBalancer service"
-  value       = try(data.kubernetes_service.coder.status[0].load_balancer[0].ingress[0].ip, "Pending - run terraform refresh after deployment completes")
+  description = "External IP address of the Coder LoadBalancer service (only if network_access_type=loadbalancer)"
+  value       = var.network_access_type == "loadbalancer" ? try(data.kubernetes_service.coder.status[0].load_balancer[0].ingress[0].ip, "Pending") : "N/A - using ${var.network_access_type}"
 }
 
 output "coder_access_url" {
   description = "URL to access Coder"
-  value       = var.coder_domain != "" ? "https://${var.coder_domain}" : "http://${try(data.kubernetes_service.coder.status[0].load_balancer[0].ingress[0].ip, "PENDING")}"
+  value = var.network_access_type == "loadbalancer" ? (
+    var.coder_domain != "" ? "https://${var.coder_domain}" : "http://${try(data.kubernetes_service.coder.status[0].load_balancer[0].ingress[0].ip, "PENDING")}"
+  ) : var.network_access_type == "wireguard" ? (
+    "http://${cidrhost(var.wireguard_network_cidr, 1)}:80 (via WireGuard VPN)"
+  ) : "Use: kubectl port-forward -n coder svc/coder 8080:80"
 }
 
 output "entra_id_app_client_id" {
@@ -130,4 +139,47 @@ output "provisioner_setup_command" {
     # coder provisionerd start --psk="$(terraform output -raw provisioner_psk)" --name="$(hostname)" --tag="owner=local,location=office"
     EOT
     : "External provisioners not enabled. Set enable_external_provisioners = true"
+}
+
+# -----------------------------------------------------------------------------
+# WireGuard VPN Outputs
+# -----------------------------------------------------------------------------
+
+output "wireguard_enabled" {
+  description = "Whether WireGuard VPN is enabled"
+  value       = var.network_access_type == "wireguard"
+}
+
+output "wireguard_endpoint" {
+  description = "WireGuard server endpoint (IP:port)"
+  value       = var.network_access_type == "wireguard" ? "${try(data.kubernetes_service.wireguard[0].status[0].load_balancer[0].ingress[0].ip, "PENDING")}:${var.wireguard_port}" : "WireGuard not enabled"
+}
+
+output "wireguard_server_public_key" {
+  description = "WireGuard server public key (generate from private key)"
+  value       = var.network_access_type == "wireguard" ? "Run: echo '${random_password.wireguard_private_key[0].result}' | wg pubkey" : "WireGuard not enabled"
+  sensitive   = true
+}
+
+output "wireguard_client_config_template" {
+  description = "Template for WireGuard client configuration"
+  value       = var.network_access_type == "wireguard" ? <<-EOT
+    # WireGuard Client Configuration Template
+    # Save as /etc/wireguard/coder.conf (Linux) or import into WireGuard app
+
+    [Interface]
+    PrivateKey = <YOUR_PRIVATE_KEY>
+    Address = <YOUR_ASSIGNED_IP>/24
+    DNS = 10.1.0.10
+
+    [Peer]
+    PublicKey = <SERVER_PUBLIC_KEY>
+    Endpoint = ${try(data.kubernetes_service.wireguard[0].status[0].load_balancer[0].ingress[0].ip, "PENDING")}:${var.wireguard_port}
+    AllowedIPs = ${var.wireguard_network_cidr}, 10.0.0.0/16, 10.1.0.0/16
+    PersistentKeepalive = 25
+
+    # After connecting, access Coder at:
+    # http://coder.coder.svc.cluster.local or http://10.1.x.x (Coder ClusterIP)
+    EOT
+    : "WireGuard not enabled"
 }

@@ -48,6 +48,7 @@ Automated deployment of [Coder](https://coder.com) for departmental development 
 - **Azure-Managed PostgreSQL**: Flexible Server with private networking
 - **AKS with Autoscaling**: Scale nodes based on workspace demand
 - **Secure by Default**: Private database, network policies, secure secrets
+- **WireGuard VPN**: Secure access without public exposure (recommended for small teams)
 - **Fully Automated**: Deploy and teardown with single commands
 - **Backup & Recovery**: Automated PostgreSQL backups with blob storage export
 - **Local Endpoints**: Run workspaces on laptops/desktops via external provisioners
@@ -127,11 +128,25 @@ cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 
 ### 4. Access Coder
 
-After deployment:
+After deployment, access depends on your `network_access_type`:
+
+**WireGuard VPN (recommended for small teams):**
+1. Set up WireGuard client: `./scripts/setup-wireguard-client.sh`
+2. Import the generated `.conf` file into your WireGuard app
+3. Connect to VPN
+4. Navigate to `http://10.10.0.1` or `http://coder.coder.svc.cluster.local`
+
+**LoadBalancer (public IP):**
 1. Get the LoadBalancer IP from the output
 2. Navigate to `http://<LOADBALANCER_IP>`
-3. Create your first admin account
-4. Users can sign in with Entra ID via "Sign in with [Department] Entra ID"
+
+**ClusterIP (kubectl only):**
+1. Run: `kubectl port-forward -n coder svc/coder 8080:80`
+2. Navigate to `http://localhost:8080`
+
+**For all access types:**
+- Create your first admin account
+- Users can sign in with Entra ID via "Sign in with [Department] Entra ID"
 
 ### 5. Teardown
 
@@ -163,10 +178,21 @@ After deployment:
 |----------|---------|-------------|
 | `resource_prefix` | `coder` | Prefix for resource names |
 | `location` | `eastus` | Azure region |
-| `department_name` | `Engineering` | Shown on OIDC login button |
-| `node_vm_size` | `Standard_D4s_v3` | AKS node VM size |
-| `node_count` | `2` | Initial node count |
+| `department_name` | `Research` | Shown on OIDC login button |
+| `node_vm_size` | `Standard_D2s_v3` | AKS node VM size (2 vCPU, 8GB - good for ≤10 users) |
+| `node_count` | `1` | Initial node count |
+| `max_node_count` | `5` | Max nodes for autoscaler |
+| `postgres_sku` | `B_Standard_B1ms` | PostgreSQL SKU (burstable, ~$15/mo) |
 | `coder_version` | `2.16.0` | Coder Helm chart version |
+
+### Network Access Configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `network_access_type` | `wireguard` | Access method: `wireguard`, `loadbalancer`, or `clusterip` |
+| `wireguard_port` | `51820` | WireGuard UDP port |
+| `wireguard_network_cidr` | `10.10.0.0/24` | VPN network range |
+| `wireguard_peers` | `[]` | List of WireGuard peers (name + public_key) |
 
 ### Entra ID Configuration
 
@@ -601,20 +627,202 @@ sudo systemctl restart coder-provisioner
 - **Resource isolation**: Docker provides container isolation; consider resource limits in templates
 - **Machine security**: Local machines should follow your organization's endpoint security policies
 
+## WireGuard VPN Access
+
+WireGuard provides secure, encrypted access to your Coder deployment without exposing it to the public internet. This is the recommended approach for small teams (≤10 users).
+
+### How It Works
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                      WireGuard VPN Architecture                      │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Team Member's Machine                    Azure AKS Cluster          │
+│  ┌──────────────────┐                    ┌──────────────────────┐   │
+│  │  WireGuard Client │◀═══Encrypted═════▶│  WireGuard Server    │   │
+│  │  10.10.0.2/24     │    UDP Tunnel      │  10.10.0.1/24        │   │
+│  └──────────────────┘                    │  (LoadBalancer:51820)│   │
+│          │                                └──────────┬───────────┘   │
+│          │                                           │               │
+│          │ Can access:                               ▼               │
+│          │  • Coder (10.1.x.x)           ┌──────────────────────┐   │
+│          │  • K8s Services               │  Coder Service       │   │
+│          │  • Pod IPs                    │  (ClusterIP)         │   │
+│          └──────────────────────────────▶│  http://10.1.x.x     │   │
+│                                          └──────────────────────┘   │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### Advantages over LoadBalancer
+
+| Aspect | WireGuard | Public LoadBalancer |
+|--------|-----------|---------------------|
+| **Security** | No public exposure | Publicly accessible |
+| **Cost** | ~$5/mo (LB for WG only) | ~$20/mo (standard LB) |
+| **Access** | VPN required | Anyone with URL |
+| **Speed** | Fast (modern crypto) | Direct |
+| **Best for** | Small teams, security-conscious | Large teams, public access |
+
+### Setting Up Team Members
+
+#### Step 1: Generate Client Configuration
+
+Run on any machine with access to the Terraform state:
+
+```bash
+./scripts/setup-wireguard-client.sh
+```
+
+This interactive script will:
+- Read the WireGuard server configuration from Terraform
+- Generate a key pair for the new team member
+- Create a `.conf` file for the WireGuard client
+- Show the peer config to add to `terraform.tfvars`
+
+#### Step 2: Add Peer to Server
+
+Add the peer to `terraform/terraform.tfvars`:
+
+```hcl
+wireguard_peers = [
+  {
+    name       = "alice"
+    public_key = "abc123..."
+  },
+  {
+    name       = "bob"
+    public_key = "def456..."
+  },
+]
+```
+
+Then apply: `./scripts/deploy.sh`
+
+#### Step 3: Install WireGuard Client
+
+**macOS:**
+```bash
+brew install wireguard-tools
+# Or download WireGuard app from App Store
+```
+
+**Ubuntu/Debian:**
+```bash
+sudo apt install wireguard-tools
+```
+
+**Windows:**
+Download from https://www.wireguard.com/install/
+
+#### Step 4: Import and Connect
+
+**macOS/Windows (GUI):**
+1. Open WireGuard app
+2. Click "Import tunnel from file"
+3. Select the generated `.conf` file
+4. Click "Activate"
+
+**Linux (CLI):**
+```bash
+sudo cp wireguard-alice.conf /etc/wireguard/coder.conf
+sudo wg-quick up coder
+
+# To disconnect
+sudo wg-quick down coder
+
+# Check status
+sudo wg show
+```
+
+#### Step 5: Access Coder
+
+Once connected:
+- **Via VPN IP:** `http://10.10.0.1`
+- **Via Kubernetes DNS:** `http://coder.coder.svc.cluster.local`
+- **Find ClusterIP:** `kubectl get svc -n coder`
+
+### Managing WireGuard Peers
+
+**List configured peers:**
+```bash
+./scripts/setup-wireguard-client.sh --list
+```
+
+**Remove a peer:**
+1. Remove from `wireguard_peers` in `terraform.tfvars`
+2. Run `./scripts/deploy.sh`
+
+**Rotate server keys:**
+```bash
+# Force recreation of WireGuard secrets
+cd terraform
+terraform taint random_password.wireguard_private_key[0]
+terraform apply
+
+# All team members will need new client configs
+```
+
+### Troubleshooting WireGuard
+
+**Can't connect:**
+```bash
+# Check if UDP 51820 is reachable
+nc -vzu <wireguard-endpoint-ip> 51820
+
+# Check WireGuard status
+sudo wg show
+
+# Check server logs
+kubectl logs -n wireguard deployment/wireguard
+```
+
+**Connected but can't access Coder:**
+```bash
+# Verify tunnel is up
+ping 10.10.0.1
+
+# Check routing
+ip route | grep 10.10
+
+# Ensure DNS is configured (check /etc/resolv.conf or WireGuard DNS setting)
+```
+
+**Handshake not completing:**
+- Verify public key in server config matches your client's public key
+- Check if NAT/firewall is blocking UDP 51820
+- Try `PersistentKeepalive = 25` in client config
+
 ## Cost Estimate
 
-Approximate monthly costs (East US, pay-as-you-go):
+### Small Team Configuration (Default)
+
+Optimized for teams of ≤10 users with WireGuard access:
 
 | Resource | SKU | Estimated Cost |
 |----------|-----|----------------|
-| AKS Nodes (2x) | Standard_D4s_v3 | ~$280 |
+| AKS Nodes (1-5x) | Standard_D2s_v3 | ~$70 (1 node) |
+| PostgreSQL | B_Standard_B1ms (Burstable) | ~$15 |
+| Load Balancer | Standard (WireGuard only) | ~$5 |
+| Storage | 32GB | ~$3 |
+| Blob Storage (Backups) | LRS | ~$2 |
+| **Total** | | **~$95/month** |
+
+### Larger Team Configuration
+
+For teams requiring public access or higher capacity:
+
+| Resource | SKU | Estimated Cost |
+|----------|-----|----------------|
+| AKS Nodes (2-10x) | Standard_D4s_v3 | ~$280 (2 nodes) |
 | PostgreSQL | GP_Standard_D2s_v3 | ~$125 |
 | Load Balancer | Standard | ~$20 |
 | Storage | 32GB Premium | ~$5 |
 | Blob Storage (Backups) | LRS | ~$2 |
 | **Total** | | **~$432/month** |
 
-*Costs vary by region and actual usage. Enable autoscaling to optimize. Local provisioners add no Azure cost.*
+*Costs vary by region and actual usage. Autoscaling adjusts node count based on demand. Local provisioners add no Azure cost.*
 
 ## Security Considerations
 

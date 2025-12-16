@@ -1,5 +1,6 @@
 # Coder on Azure AKS - Configuration
 # Copy this file to terraform.tfvars and customize the values
+# Or run: ./scripts/configure.sh for interactive setup
 
 # =============================================================================
 # REQUIRED: Azure Authentication
@@ -15,42 +16,62 @@ client_secret   = "your-service-principal-secret"         # Service Principal Se
 # General Configuration
 # =============================================================================
 
-resource_prefix = "mycompany-coder"  # Prefix for all resource names
-location        = "eastus"           # Azure region
-department_name = "Engineering"      # Department name (used in OIDC button text)
+resource_prefix = "coder"        # Prefix for all resource names
+location        = "eastus"       # Azure region
+department_name = "Research"     # Department name (used in OIDC button text)
 
 # Resource tags
 tags = {
   Environment = "Production"
-  Department  = "Engineering"
+  Department  = "Research"
   ManagedBy   = "Terraform"
   Application = "Coder"
-  CostCenter  = "12345"
 }
 
 # =============================================================================
-# AKS Configuration
+# AKS Configuration (defaults optimized for small teams ≤10 people)
 # =============================================================================
 
-kubernetes_version = "1.28"              # Kubernetes version
-node_count         = 2                   # Initial node count
-node_vm_size       = "Standard_D4s_v3"   # VM size (4 vCPU, 16GB RAM)
-enable_autoscaling = true                # Enable cluster autoscaler
-min_node_count     = 2                   # Min nodes for autoscaler
-max_node_count     = 10                  # Max nodes for autoscaler
+kubernetes_version = "1.28"            # Kubernetes version
+node_count         = 1                 # Initial node count
+node_vm_size       = "Standard_D2s_v3" # VM size (2 vCPU, 8GB RAM - good for ≤10 users)
+enable_autoscaling = true              # Enable cluster autoscaler
+min_node_count     = 1                 # Min nodes for autoscaler
+max_node_count     = 5                 # Max nodes for autoscaler
 
 # Optional: Azure AD groups with AKS admin access
-# Get group Object IDs from Entra ID > Groups
-aks_admin_group_ids = [
-  # "00000000-0000-0000-0000-000000000000",  # Platform Admins group
+aks_admin_group_ids = []
+
+# =============================================================================
+# PostgreSQL Configuration (defaults optimized for small teams)
+# =============================================================================
+
+postgres_sku        = "B_Standard_B1ms"  # Burstable, 1 vCPU (~$15/mo)
+postgres_storage_mb = 32768              # 32 GB storage
+
+# =============================================================================
+# Network Access Configuration
+# =============================================================================
+# Options: "wireguard" (secure VPN), "loadbalancer" (public IP), "clusterip" (kubectl only)
+
+network_access_type = "wireguard"  # Recommended for small teams
+
+# WireGuard VPN settings (only used if network_access_type = "wireguard")
+wireguard_port         = 51820
+wireguard_network_cidr = "10.10.0.0/24"
+
+# Add team members as WireGuard peers
+# Generate keys with: wg genkey | tee privatekey | wg pubkey > publickey
+wireguard_peers = [
+  # {
+  #   name       = "alice"
+  #   public_key = "abc123..."
+  # },
+  # {
+  #   name       = "bob"
+  #   public_key = "def456..."
+  # },
 ]
-
-# =============================================================================
-# PostgreSQL Configuration
-# =============================================================================
-
-postgres_sku        = "GP_Standard_D2s_v3"  # General Purpose, 2 vCPU
-postgres_storage_mb = 32768                 # 32 GB storage
 
 # =============================================================================
 # Backup Configuration
@@ -64,35 +85,27 @@ backup_blob_retention_days = 365    # Long-term blob storage retention
 # =============================================================================
 # External Provisioners (Local Endpoints)
 # =============================================================================
-# Enable this to allow laptops/desktops to run workspaces locally
+# Enable to allow laptops/desktops to run workspaces locally
 
-enable_external_provisioners = false  # Set true to enable local provisioners
-provisioner_tags             = ""     # Default tags (e.g., "location:office")
+enable_external_provisioners = false
 
 # =============================================================================
 # Coder Configuration
 # =============================================================================
 
-coder_version = "2.16.0"  # Coder Helm chart version
+coder_version = "2.16.0"
 
-# Domain configuration (optional but recommended for production)
-# If not set, Coder will be accessible via LoadBalancer IP
-coder_domain          = ""  # e.g., "coder.example.com"
-coder_wildcard_domain = ""  # e.g., "coder.example.com" (for *.coder.example.com)
+# Domain configuration (optional - not needed with WireGuard)
+coder_domain          = ""
+coder_wildcard_domain = ""
 enable_ingress        = false
-
-# Experimental features (comma-separated)
-coder_experiments = ""
 
 # =============================================================================
 # Entra ID (Azure AD) Configuration
 # =============================================================================
 
 # Restrict login to specific email domains (leave empty to allow all)
-allowed_email_domains = [
-  # "example.com",
-  # "corp.example.com",
-]
+allowed_email_domains = []
 
 # Sync Entra ID groups to Coder (for RBAC)
 enable_group_sync = false

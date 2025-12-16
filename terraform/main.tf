@@ -573,10 +573,10 @@ resource "helm_release" "coder" {
         ] : [])
 
         service = {
-          type = "LoadBalancer"
-          annotations = {
+          type = var.network_access_type == "loadbalancer" ? "LoadBalancer" : "ClusterIP"
+          annotations = var.network_access_type == "loadbalancer" ? {
             "service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path" = "/healthz"
-          }
+          } : {}
         }
 
         ingress = {
@@ -595,6 +595,158 @@ resource "helm_release" "coder" {
     kubernetes_secret.coder_oidc,
     azurerm_postgresql_flexible_server_database.coder
   ]
+}
+
+# -----------------------------------------------------------------------------
+# WireGuard VPN Server (optional - for secure access without public LoadBalancer)
+# -----------------------------------------------------------------------------
+
+resource "random_password" "wireguard_private_key" {
+  count   = var.network_access_type == "wireguard" ? 1 : 0
+  length  = 44
+  special = false
+}
+
+resource "kubernetes_namespace" "wireguard" {
+  count = var.network_access_type == "wireguard" ? 1 : 0
+
+  metadata {
+    name = "wireguard"
+    labels = {
+      "app.kubernetes.io/name"       = "wireguard"
+      "app.kubernetes.io/managed-by" = "terraform"
+    }
+  }
+
+  depends_on = [azurerm_kubernetes_cluster.coder]
+}
+
+resource "kubernetes_secret" "wireguard_config" {
+  count = var.network_access_type == "wireguard" ? 1 : 0
+
+  metadata {
+    name      = "wireguard-config"
+    namespace = kubernetes_namespace.wireguard[0].metadata[0].name
+  }
+
+  data = {
+    "wg0.conf" = templatefile("${path.module}/wireguard.conf.tpl", {
+      server_private_key = random_password.wireguard_private_key[0].result
+      server_address     = cidrhost(var.wireguard_network_cidr, 1)
+      server_cidr        = var.wireguard_network_cidr
+      listen_port        = var.wireguard_port
+      peers              = var.wireguard_peers
+      peer_ips           = { for i, peer in var.wireguard_peers : peer.name => cidrhost(var.wireguard_network_cidr, i + 2) }
+      coder_service_ip   = "coder.coder.svc.cluster.local"
+    })
+  }
+}
+
+resource "kubernetes_deployment" "wireguard" {
+  count = var.network_access_type == "wireguard" ? 1 : 0
+
+  metadata {
+    name      = "wireguard"
+    namespace = kubernetes_namespace.wireguard[0].metadata[0].name
+    labels = {
+      app = "wireguard"
+    }
+  }
+
+  spec {
+    replicas = 1
+
+    selector {
+      match_labels = {
+        app = "wireguard"
+      }
+    }
+
+    template {
+      metadata {
+        labels = {
+          app = "wireguard"
+        }
+      }
+
+      spec {
+        container {
+          name  = "wireguard"
+          image = "linuxserver/wireguard:latest"
+
+          port {
+            container_port = var.wireguard_port
+            protocol       = "UDP"
+          }
+
+          env {
+            name  = "PUID"
+            value = "1000"
+          }
+          env {
+            name  = "PGID"
+            value = "1000"
+          }
+          env {
+            name  = "TZ"
+            value = "UTC"
+          }
+
+          volume_mount {
+            name       = "config"
+            mount_path = "/config/wg_confs"
+          }
+
+          security_context {
+            capabilities {
+              add = ["NET_ADMIN", "SYS_MODULE"]
+            }
+          }
+        }
+
+        volume {
+          name = "config"
+          secret {
+            secret_name = kubernetes_secret.wireguard_config[0].metadata[0].name
+          }
+        }
+      }
+    }
+  }
+}
+
+resource "kubernetes_service" "wireguard" {
+  count = var.network_access_type == "wireguard" ? 1 : 0
+
+  metadata {
+    name      = "wireguard"
+    namespace = kubernetes_namespace.wireguard[0].metadata[0].name
+  }
+
+  spec {
+    type = "LoadBalancer"
+
+    selector = {
+      app = "wireguard"
+    }
+
+    port {
+      port        = var.wireguard_port
+      target_port = var.wireguard_port
+      protocol    = "UDP"
+    }
+  }
+}
+
+data "kubernetes_service" "wireguard" {
+  count = var.network_access_type == "wireguard" ? 1 : 0
+
+  metadata {
+    name      = "wireguard"
+    namespace = kubernetes_namespace.wireguard[0].metadata[0].name
+  }
+
+  depends_on = [kubernetes_service.wireguard]
 }
 
 # -----------------------------------------------------------------------------
