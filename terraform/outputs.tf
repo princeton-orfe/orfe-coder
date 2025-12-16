@@ -125,20 +125,19 @@ output "provisioner_psk" {
 
 output "provisioner_setup_command" {
   description = "Command to run on local machines to start a provisioner daemon"
-  value       = var.enable_external_provisioners ? <<-EOT
-    # Install Coder CLI and run provisioner daemon on a local machine:
-    #
-    # macOS/Linux:
-    # curl -fsSL https://coder.com/install.sh | sh
-    #
-    # Windows (PowerShell):
-    # winget install Coder.Coder
-    #
-    # Then run the provisioner daemon:
-    # export CODER_URL="${var.coder_domain != "" ? "https://${var.coder_domain}" : "http://<LOADBALANCER_IP>"}"
-    # coder provisionerd start --psk="$(terraform output -raw provisioner_psk)" --name="$(hostname)" --tag="owner=local,location=office"
-    EOT
-    : "External provisioners not enabled. Set enable_external_provisioners = true"
+  value = var.enable_external_provisioners ? join("\n", [
+    "# Install Coder CLI and run provisioner daemon on a local machine:",
+    "#",
+    "# macOS/Linux:",
+    "# curl -fsSL https://coder.com/install.sh | sh",
+    "#",
+    "# Windows (PowerShell):",
+    "# winget install Coder.Coder",
+    "#",
+    "# Then run the provisioner daemon:",
+    "# export CODER_URL=\"${var.coder_domain != "" ? "https://${var.coder_domain}" : "http://<LOADBALANCER_IP>"}\"",
+    "# coder provisionerd start --psk=\"$(terraform output -raw provisioner_psk)\" --name=\"$(hostname)\" --tag=\"owner=local,location=office\""
+  ]) : "External provisioners not enabled. Set enable_external_provisioners = true"
 }
 
 # -----------------------------------------------------------------------------
@@ -163,23 +162,22 @@ output "wireguard_server_public_key" {
 
 output "wireguard_client_config_template" {
   description = "Template for WireGuard client configuration"
-  value       = var.network_access_type == "wireguard" ? <<-EOT
-    # WireGuard Client Configuration Template
-    # Save as /etc/wireguard/coder.conf (Linux) or import into WireGuard app
-
-    [Interface]
-    PrivateKey = <YOUR_PRIVATE_KEY>
-    Address = <YOUR_ASSIGNED_IP>/24
-    DNS = 10.1.0.10
-
-    [Peer]
-    PublicKey = <SERVER_PUBLIC_KEY>
-    Endpoint = ${try(data.kubernetes_service.wireguard[0].status[0].load_balancer[0].ingress[0].ip, "PENDING")}:${var.wireguard_port}
-    AllowedIPs = ${var.wireguard_network_cidr}, 10.0.0.0/16, 10.1.0.0/16
-    PersistentKeepalive = 25
-
-    # After connecting, access Coder at:
-    # http://coder.coder.svc.cluster.local or http://10.1.x.x (Coder ClusterIP)
-    EOT
-    : "WireGuard not enabled"
+  value = var.network_access_type == "wireguard" ? join("\n", [
+    "# WireGuard Client Configuration Template",
+    "# Save as /etc/wireguard/coder.conf (Linux) or import into WireGuard app",
+    "",
+    "[Interface]",
+    "PrivateKey = <YOUR_PRIVATE_KEY>",
+    "Address = <YOUR_ASSIGNED_IP>/24",
+    "DNS = 10.1.0.10",
+    "",
+    "[Peer]",
+    "PublicKey = <SERVER_PUBLIC_KEY>",
+    "Endpoint = ${try(data.kubernetes_service.wireguard[0].status[0].load_balancer[0].ingress[0].ip, "PENDING")}:${var.wireguard_port}",
+    "AllowedIPs = ${var.wireguard_network_cidr}, 10.0.0.0/16, 10.1.0.0/16",
+    "PersistentKeepalive = 25",
+    "",
+    "# After connecting, access Coder at:",
+    "# http://coder.coder.svc.cluster.local or http://10.1.x.x (Coder ClusterIP)"
+  ]) : "WireGuard not enabled"
 }
