@@ -83,6 +83,14 @@ locals {
   # e.g., "orfe-dept-azure-bs37-coder-rg" -> "orfe-dept-azure-bs37-coder"
   resource_prefix = trimsuffix(var.resource_group_name, "-rg")
 
+  # Shorter prefix for AKS to avoid node resource group name exceeding 80 chars
+  # AKS auto-generates: MC_{resource_group}_{cluster_name}_{location}
+  aks_name_prefix = length(local.resource_prefix) > 20 ? substr(local.resource_prefix, 0, 20) : local.resource_prefix
+
+  # OIDC credentials - use existing or created app
+  oidc_client_id     = var.use_existing_entra_app ? var.entra_app_client_id : azuread_application.coder[0].client_id
+  oidc_client_secret = var.use_existing_entra_app ? var.entra_app_client_secret : azuread_application_password.coder[0].value
+
   # Coder access URL - use custom domain if set, otherwise LoadBalancer IP
   coder_access_url = var.coder_domain != "" ? "https://${var.coder_domain}" : "http://${try(data.kubernetes_service.coder.status[0].load_balancer[0].ingress[0].ip, "PENDING")}"
 
@@ -129,7 +137,9 @@ resource "azurerm_resource_group" "coder" {
 # Entra ID (Azure AD) Application Registration for Coder OIDC
 # -----------------------------------------------------------------------------
 
+# Only create app registration if not using an existing one
 resource "azuread_application" "coder" {
+  count        = var.use_existing_entra_app ? 0 : 1
   display_name = "${local.resource_prefix}-coder-app"
   owners       = [data.azuread_client_config.current.object_id]
 
@@ -193,15 +203,17 @@ resource "azuread_application" "coder" {
 }
 
 resource "azuread_application_password" "coder" {
-  application_id = azuread_application.coder.id
+  count          = var.use_existing_entra_app ? 0 : 1
+  application_id = azuread_application.coder[0].id
   display_name   = "coder-oidc-secret"
   end_date       = timeadd(timestamp(), "8760h") # 1 year
 }
 
 # Add LoadBalancer IP-based redirect URI after Coder is deployed (when no custom domain)
+# Only if we created the app registration ourselves
 resource "azuread_application_redirect_uris" "coder_lb" {
-  count          = var.coder_domain == "" && var.network_access_type == "loadbalancer" ? 1 : 0
-  application_id = azuread_application.coder.id
+  count          = !var.use_existing_entra_app && var.coder_domain == "" && var.network_access_type == "loadbalancer" ? 1 : 0
+  application_id = azuread_application.coder[0].id
   type           = "Web"
 
   redirect_uris = [
@@ -213,7 +225,8 @@ resource "azuread_application_redirect_uris" "coder_lb" {
 }
 
 resource "azuread_service_principal" "coder" {
-  client_id                    = azuread_application.coder.client_id
+  count                        = var.use_existing_entra_app ? 0 : 1
+  client_id                    = azuread_application.coder[0].client_id
   app_role_assignment_required = false
   owners                       = [data.azuread_client_config.current.object_id]
 }
@@ -376,10 +389,10 @@ resource "azurerm_postgresql_flexible_server_database" "coder" {
 # -----------------------------------------------------------------------------
 
 resource "azurerm_kubernetes_cluster" "coder" {
-  name                = "${local.resource_prefix}-aks-${random_id.suffix.hex}"
+  name                = "${local.aks_name_prefix}-aks-${random_id.suffix.hex}"
   location            = azurerm_resource_group.coder.location
   resource_group_name = azurerm_resource_group.coder.name
-  dns_prefix          = "${local.resource_prefix}-coder"
+  dns_prefix          = "${local.aks_name_prefix}-coder"
   kubernetes_version  = var.kubernetes_version
 
   default_node_pool {
@@ -465,8 +478,8 @@ resource "kubernetes_secret" "coder_oidc" {
   }
 
   data = {
-    client-id     = azuread_application.coder.client_id
-    client-secret = azuread_application_password.coder.value
+    client-id     = local.oidc_client_id
+    client-secret = local.oidc_client_secret
   }
 
   depends_on = [kubernetes_namespace.coder]

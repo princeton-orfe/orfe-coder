@@ -124,6 +124,42 @@ check_tfvars() {
     log_success "terraform.tfvars found"
 }
 
+# Setup Entra ID app registration (uses user's Azure CLI credentials)
+setup_entra_app() {
+    log_info "Checking Entra ID app registration..."
+
+    local entra_config="${TERRAFORM_DIR}/entra-app.auto.tfvars"
+
+    # Check if already configured
+    if [[ -f "${entra_config}" ]]; then
+        log_success "Entra ID app already configured"
+        return 0
+    fi
+
+    # Check if using existing app via terraform.tfvars
+    if grep -q "use_existing_entra_app.*=.*true" "${TERRAFORM_DIR}/terraform.tfvars" 2>/dev/null; then
+        log_success "Using existing Entra ID app (configured in terraform.tfvars)"
+        return 0
+    fi
+
+    log_info "Setting up Entra ID app registration..."
+    log_info "This uses your Azure CLI credentials (separate from service principal)"
+
+    if [[ -x "${SCRIPT_DIR}/setup-entra-app.sh" ]]; then
+        "${SCRIPT_DIR}/setup-entra-app.sh"
+    else
+        log_error "setup-entra-app.sh not found or not executable"
+        echo ""
+        echo "You can either:"
+        echo "  1. Run: chmod +x ${SCRIPT_DIR}/setup-entra-app.sh && ${SCRIPT_DIR}/setup-entra-app.sh"
+        echo "  2. Manually create an Entra ID app and add to terraform.tfvars:"
+        echo "     use_existing_entra_app  = true"
+        echo "     entra_app_client_id     = \"<client-id>\""
+        echo "     entra_app_client_secret = \"<client-secret>\""
+        exit 1
+    fi
+}
+
 # Initialize Terraform
 init_terraform() {
     log_info "Initializing Terraform..."
@@ -174,14 +210,10 @@ apply_terraform() {
 
     cd "${TERRAFORM_DIR}"
 
-    local apply_args=()
     if [[ "${AUTO_APPROVE}" == "true" ]]; then
-        apply_args+=("-auto-approve")
-    fi
-
-    if ! terraform apply "${apply_args[@]}" tfplan; then
-        log_error "Terraform apply failed"
-        exit 1
+        terraform apply -auto-approve tfplan || { log_error "Terraform apply failed"; exit 1; }
+    else
+        terraform apply tfplan || { log_error "Terraform apply failed"; exit 1; }
     fi
 
     log_success "Terraform apply completed"
@@ -257,6 +289,29 @@ wait_for_lb() {
     fi
 }
 
+# Update Entra ID app with LoadBalancer redirect URI
+update_entra_redirect_uri() {
+    local lb_ip="$1"
+
+    if [[ -z "${lb_ip}" ]] || [[ "${lb_ip}" == "Pending" ]] || [[ "${lb_ip}" == "Unknown" ]]; then
+        return
+    fi
+
+    # Check if we created the app (vs using existing)
+    if [[ ! -f "${TERRAFORM_DIR}/entra-app.auto.tfvars" ]]; then
+        return
+    fi
+
+    log_info "Adding LoadBalancer redirect URI to Entra ID app..."
+
+    if "${SCRIPT_DIR}/setup-entra-app.sh" add-redirect "${lb_ip}" 2>/dev/null; then
+        log_success "Redirect URI added for ${lb_ip}"
+    else
+        log_warn "Could not auto-add redirect URI. Add manually in Azure Portal:"
+        echo "       http://${lb_ip}/api/v2/users/oidc/callback"
+    fi
+}
+
 # Print deployment summary
 print_summary() {
     log_info "Deployment Summary"
@@ -280,6 +335,9 @@ print_summary() {
     local client_id
     client_id=$(terraform output -raw entra_id_app_client_id 2>/dev/null || echo "Unknown")
     echo "  Entra ID App Client ID: ${client_id}"
+
+    # Update Entra ID redirect URI with LoadBalancer IP
+    update_entra_redirect_uri "${lb_ip}"
 
     echo ""
     echo "  Next Steps:"
@@ -308,6 +366,7 @@ main() {
     check_prerequisites
     check_azure_auth
     check_tfvars
+    setup_entra_app
     init_terraform
     validate_terraform
     plan_terraform

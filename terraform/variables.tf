@@ -251,3 +251,22 @@ variable "enable_group_sync" {
   type        = bool
   default     = false
 }
+
+variable "use_existing_entra_app" {
+  description = "Use an existing Entra ID app registration instead of creating one (requires entra_app_client_id and entra_app_client_secret)"
+  type        = bool
+  default     = false
+}
+
+variable "entra_app_client_id" {
+  description = "Existing Entra ID app registration Client ID (required if use_existing_entra_app=true)"
+  type        = string
+  default     = ""
+}
+
+variable "entra_app_client_secret" {
+  description = "Existing Entra ID app registration Client Secret (required if use_existing_entra_app=true)"
+  type        = string
+  default     = ""
+  sensitive   = true
+}

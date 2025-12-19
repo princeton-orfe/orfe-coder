@@ -44,12 +44,12 @@ output "coder_access_url" {
 
 output "entra_id_app_client_id" {
   description = "Entra ID Application (Client) ID for OIDC"
-  value       = azuread_application.coder.client_id
+  value       = local.oidc_client_id
 }
 
 output "entra_id_app_object_id" {
   description = "Entra ID Application Object ID"
-  value       = azuread_application.coder.object_id
+  value       = var.use_existing_entra_app ? "Using existing app" : azuread_application.coder[0].object_id
 }
 
 output "entra_id_issuer_url" {
@@ -73,7 +73,7 @@ output "dns_configuration" {
 
 output "entra_id_app_client_secret" {
   description = "Entra ID Application Client Secret (sensitive)"
-  value       = azuread_application_password.coder.value
+  value       = var.use_existing_entra_app ? "Using existing app secret" : azuread_application_password.coder[0].value
   sensitive   = true
 }
 
