@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Coder on Azure AKS - Automated Teardown Script
-# Usage: ./teardown.sh [--auto-approve] [--force]
+# Usage: ./teardown.sh [--auto-approve] [--force] [--delete-sp]
 
 set -euo pipefail
 
@@ -8,6 +8,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TERRAFORM_DIR="${SCRIPT_DIR}/../terraform"
 AUTO_APPROVE=false
 FORCE=false
+DELETE_SP=false
+DELETE_ENTRA_APP=true  # Always delete the Entra app we created
 
 # Colors for output
 RED='\033[0;31m'
@@ -32,12 +34,22 @@ while [[ $# -gt 0 ]]; do
             FORCE=true
             shift
             ;;
+        --delete-sp)
+            DELETE_SP=true
+            shift
+            ;;
+        --keep-entra-app)
+            DELETE_ENTRA_APP=false
+            shift
+            ;;
         -h|--help)
-            echo "Usage: $0 [--auto-approve] [--force]"
+            echo "Usage: $0 [--auto-approve] [--force] [--delete-sp] [--keep-entra-app]"
             echo ""
             echo "Options:"
-            echo "  --auto-approve  Skip interactive approval prompts"
-            echo "  --force         Force destruction even if some resources fail"
+            echo "  --auto-approve    Skip interactive approval prompts"
+            echo "  --force           Force destruction even if some resources fail"
+            echo "  --delete-sp       Also delete the service principal (for full cleanup)"
+            echo "  --keep-entra-app  Keep the Entra ID app registration (default: delete it)"
             echo ""
             exit 0
             ;;
@@ -106,8 +118,11 @@ confirm_destroy() {
     echo "  This includes:"
     echo "    - AKS cluster and all workspaces"
     echo "    - PostgreSQL database and all data"
-    echo "    - Entra ID application registration"
+    echo "    - Entra ID application registration (created by setup-entra-app.sh)"
     echo "    - All associated network resources"
+    if [[ "${DELETE_SP}" == "true" ]]; then
+        echo "    - Service principal (--delete-sp flag set)"
+    fi
     echo ""
     read -p "  Type 'destroy' to confirm: " confirmation
 
@@ -186,6 +201,87 @@ destroy_terraform() {
     fi
 }
 
+# Clean up Entra ID app registration
+cleanup_entra_app() {
+    if [[ "${DELETE_ENTRA_APP}" != "true" ]]; then
+        log_info "Keeping Entra ID app registration (--keep-entra-app)"
+        return 0
+    fi
+
+    local entra_config="${TERRAFORM_DIR}/entra-app.auto.tfvars"
+
+    if [[ ! -f "${entra_config}" ]]; then
+        log_info "No Entra ID app config found, skipping"
+        return 0
+    fi
+
+    log_info "Cleaning up Entra ID app registration..."
+
+    # Extract client ID from config
+    local app_client_id
+    app_client_id=$(grep "entra_app_client_id" "${entra_config}" | sed 's/.*= *"\(.*\)".*/\1/' || echo "")
+
+    if [[ -n "${app_client_id}" ]]; then
+        # Check if az CLI is available and logged in
+        if command -v az &> /dev/null && az account show &> /dev/null; then
+            log_info "Deleting Entra ID app: ${app_client_id}"
+            if az ad app delete --id "${app_client_id}" 2>/dev/null; then
+                log_success "Entra ID app deleted"
+            else
+                log_warn "Could not delete Entra ID app (may already be deleted or no permission)"
+            fi
+        else
+            log_warn "Azure CLI not available or not logged in, skipping Entra ID app deletion"
+            log_info "To delete manually: az ad app delete --id ${app_client_id}"
+        fi
+    fi
+
+    # Remove the config file
+    rm -f "${entra_config}"
+    log_success "Removed entra-app.auto.tfvars"
+}
+
+# Clean up service principal (optional)
+cleanup_service_principal() {
+    if [[ "${DELETE_SP}" != "true" ]]; then
+        return 0
+    fi
+
+    log_info "Cleaning up service principal..."
+
+    local tfvars="${TERRAFORM_DIR}/terraform.tfvars"
+
+    if [[ ! -f "${tfvars}" ]]; then
+        log_warn "No terraform.tfvars found, skipping service principal cleanup"
+        return 0
+    fi
+
+    # Extract client ID from tfvars
+    local sp_client_id
+    sp_client_id=$(grep "^client_id" "${tfvars}" | sed 's/.*= *"\(.*\)".*/\1/' || echo "")
+
+    if [[ -n "${sp_client_id}" ]]; then
+        if command -v az &> /dev/null && az account show &> /dev/null; then
+            log_info "Deleting service principal: ${sp_client_id}"
+            if az ad app delete --id "${sp_client_id}" 2>/dev/null; then
+                log_success "Service principal deleted"
+
+                # Clear credentials from tfvars
+                log_info "Clearing credentials from terraform.tfvars..."
+                sed -i.bak 's/^client_id *= *".*"/client_id       = ""/' "${tfvars}"
+                sed -i.bak 's/^client_secret *= *".*"/client_secret   = ""/' "${tfvars}"
+                rm -f "${tfvars}.bak"
+                log_success "Credentials cleared from terraform.tfvars"
+            else
+                log_warn "Could not delete service principal (may already be deleted or no permission)"
+            fi
+        else
+            log_warn "Azure CLI not available or not logged in"
+            log_info "To delete manually: az ad app delete --id ${sp_client_id}"
+        fi
+    fi
+}
+
 # Clean up local files
 cleanup_local() {
     log_info "Cleaning up local files..."
@@ -255,6 +351,8 @@ main() {
     confirm_destroy
     cleanup_kubernetes
     destroy_terraform
+    cleanup_entra_app
+    cleanup_service_principal
     cleanup_local
     verify_destruction
     print_summary
