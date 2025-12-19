@@ -56,12 +56,19 @@ Automated deployment of [Coder](https://coder.com) for departmental development 
 ## Prerequisites
 
 1. **Azure Subscription** with permissions to create resources
-2. **Service Principal** with `Contributor` role on the subscription
-3. **Tools installed**:
+2. **Azure CLI** logged in with your user account (for Entra ID app creation)
+3. **Service Principal** with `Contributor` role on the subscription (for infrastructure)
+4. **Tools installed**:
    - [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.3.0
    - [Azure CLI](https://docs.microsoft.com/en-us/cli/azure/install-azure-cli) (`az`)
    - [kubectl](https://kubernetes.io/docs/tasks/tools/)
    - [Helm](https://helm.sh/docs/intro/install/)
+
+**Note:** The deployment uses a split-permission model:
+- Your **user account** (via `az login`) creates the Entra ID app registration
+- The **service principal** creates Azure infrastructure (AKS, PostgreSQL, etc.)
+
+This avoids requiring elevated Entra ID permissions on the service principal.
 
 ## Quick Start
 
@@ -82,13 +89,17 @@ The wizard will:
 
 ### Option B: Manual Configuration
 
-#### 1. Create Service Principal
+#### 1. Login to Azure
 
 ```bash
-# Login to Azure
+# Login with your user account (for Entra ID app creation)
 az login
+```
 
-# Create service principal with Contributor role
+#### 2. Create Service Principal
+
+```bash
+# Create service principal with Contributor role (for infrastructure only)
 az ad sp create-for-rbac \
   --name "coder-terraform-sp" \
   --role Contributor \
@@ -103,7 +114,7 @@ az ad sp create-for-rbac \
 # }
 ```
 
-#### 2. Configure Terraform
+#### 3. Configure Terraform
 
 ```bash
 # Copy example configuration
@@ -113,10 +124,14 @@ cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 # Required: subscription_id, tenant_id, client_id, client_secret
 ```
 
-#### 3. Deploy
+#### 4. Deploy
 
 ```bash
 # Full automated deployment
+# This will:
+# 1. Create Entra ID app (using your Azure CLI credentials)
+# 2. Deploy infrastructure (using service principal)
+# 3. Configure OIDC redirect URIs
 ./scripts/deploy.sh
 
 # Or preview changes first
@@ -126,7 +141,20 @@ cp terraform/terraform.tfvars.example terraform/terraform.tfvars
 ./scripts/deploy.sh --auto-approve
 ```
 
-### 4. Access Coder
+#### Alternative: Pre-create Entra ID App
+
+If you want to create the Entra ID app separately:
+
+```bash
+# Create Entra ID app registration
+./scripts/setup-entra-app.sh
+
+# This saves credentials to terraform/entra-app.auto.tfvars
+# Then run deploy normally
+./scripts/deploy.sh
+```
+
+### 5. Access Coder
 
 After deployment:
 1. Get the LoadBalancer IP from the Terraform output
@@ -136,7 +164,7 @@ After deployment:
 
 No VPN or special software required - Entra ID provides authentication.
 
-### 5. Teardown
+### 6. Teardown
 
 ```bash
 # Interactive teardown with confirmation
@@ -186,6 +214,9 @@ No VPN or special software required - Entra ID provides authentication.
 | `allowed_email_domains` | `[]` | Restrict login to specific domains |
 | `enable_group_sync` | `false` | Sync Entra ID groups to Coder |
 | `aks_admin_group_ids` | `[]` | Groups with AKS admin access |
+| `use_existing_entra_app` | `false` | Use pre-existing Entra ID app instead of creating one |
+| `entra_app_client_id` | `""` | Client ID of existing Entra app (if `use_existing_entra_app=true`) |
+| `entra_app_client_secret` | `""` | Client secret of existing Entra app (if `use_existing_entra_app=true`) |
 
 ### Custom Domain (Optional)
 
@@ -217,17 +248,77 @@ Then create DNS A records pointing to the LoadBalancer IP.
 
 ## Entra ID Setup Details
 
-The Terraform configuration automatically:
+The deployment uses a **split-permission model** to avoid requiring elevated Entra ID permissions on the service principal:
 
-1. Creates an App Registration in Entra ID
-2. Configures OIDC redirect URIs
-3. Requests Microsoft Graph permissions (User.Read, email, profile, openid)
-4. Creates a client secret (valid 1 year)
-5. Configures Coder with OIDC settings
+### How It Works
 
-### Manual Entra ID Steps (if needed)
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Split Permission Model                            │
+├─────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  Your User Account (az login)         Service Principal              │
+│  ┌─────────────────────────┐          ┌─────────────────────────┐   │
+│  │ Creates Entra ID App    │          │ Creates Infrastructure  │   │
+│  │ • App Registration      │          │ • AKS Cluster           │   │
+│  │ • Client Secret         │          │ • PostgreSQL            │   │
+│  │ • Redirect URIs         │          │ • Virtual Network       │   │
+│  │                         │          │ • Load Balancer         │   │
+│  └──────────┬──────────────┘          └──────────┬──────────────┘   │
+│             │                                    │                   │
+│             ▼                                    ▼                   │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │              terraform/entra-app.auto.tfvars                  │   │
+│  │              terraform/terraform.tfvars                       │   │
+│  └──────────────────────────────────────────────────────────────┘   │
+│                                                                      │
+└─────────────────────────────────────────────────────────────────────┘
+```
 
-If you need to configure additional settings in Entra ID:
+### Automatic Setup
+
+The `deploy.sh` script automatically:
+
+1. Runs `setup-entra-app.sh` (using your Azure CLI credentials)
+2. Creates an App Registration in Entra ID
+3. Configures OIDC redirect URIs
+4. Requests Microsoft Graph permissions (User.Read, email, profile, openid)
+5. Creates a client secret (valid 1 year)
+6. Saves credentials to `terraform/entra-app.auto.tfvars`
+7. After deployment, adds the LoadBalancer IP redirect URI
+
+### Manual Entra ID App Creation
+
+If you prefer to create the app manually or use an existing one:
+
+```bash
+# Option 1: Use the setup script separately
+./scripts/setup-entra-app.sh
+
+# Option 2: Create in Azure Portal, then configure Terraform
+# Add to terraform/terraform.tfvars:
+use_existing_entra_app  = true
+entra_app_client_id     = "<your-client-id>"
+entra_app_client_secret = "<your-client-secret>"
+```
+
+### Post-Deployment: Add Redirect URI
+
+After deployment, the LoadBalancer IP redirect URI is added automatically. If you need to add it manually:
+
+```bash
+# Using the script
+./scripts/setup-entra-app.sh add-redirect <LOADBALANCER_IP>
+
+# Or in Azure Portal:
+# 1. Go to Entra ID > App registrations > <your-app>
+# 2. Authentication > Add redirect URI
+# 3. Add: http://<LOADBALANCER_IP>/api/v2/users/oidc/callback
+```
+
+### Additional Entra ID Configuration
+
+For advanced settings:
 
 1. Navigate to **Azure Portal** > **Entra ID** > **App registrations**
 2. Find the app named `<resource_prefix>-coder-app`
